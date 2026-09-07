@@ -14,9 +14,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
+# Auf die Minor-Version genagelt: die Tauri-CLI besteht darauf, dass Rust-Crate
+# und npm-Paket auf derselben Minor-Version liegen, sonst bricht jeder Build ab.
+# Beim Anheben immer beide Seiten zusammen bewegen (package.json).
+tauri = { version = "2.11", features = [] }
+tauri-plugin-dialog = "2.7"
+tauri-plugin-opener = "2.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "sync", "time", "macros", "rt-multi-thread"] }

@@ -1,0 +1,61 @@
+name: Release
+
+# Baut die Installer für Windows und macOS und hängt sie an ein Release.
+# Auslöser: ein Tag wie v0.1.0 -- oder manuell über die Actions-Oberfläche.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ein Universal-Paket für Intel und Apple Silicon in einem.
+          - platform: macos-latest
+            target: universal-apple-darwin
+            label: macOS (universal)
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows (x64)
+
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target ${{ matrix.target }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-test', github.run_number) }}
+          releaseName: MottulVideoLoader ${{ github.ref_type == 'tag' && github.ref_name || 'Testbau' }}
+          releaseBody: |
+            Installation und erster Start: siehe `docs/INSTALL.md`.
+
+            Die Pakete sind nicht signiert — Windows und macOS zeigen deshalb
+            beim ersten Start eine Warnung. Die Anleitung beschreibt, wie man
+            sie bestätigt.
+          releaseDraft: true
+          prerelease: false

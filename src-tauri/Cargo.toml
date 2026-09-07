@@ -1,0 +1,48 @@
+[package]
+name = "mottul-video-loader"
+version = "0.1.0"
+description = "Schlanker Video-Downloader auf Basis von yt-dlp"
+authors = ["Mottul"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "mottul_video_loader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "time", "macros", "rt-multi-thread"] }
+# rustls statt native-tls: keine OpenSSL-Abhaengigkeit in den CI-Builds fuer
+# Windows und macOS. Die Wurzelzertifikate kommen aber aus dem SYSTEMSPEICHER --
+# hinter einem TLS-pruefenden Firmen-Proxy scheitert sonst jeder Download, weil
+# dessen Zertifikat in den mitgelieferten Mozilla-Wurzeln nicht vorkommt.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots",
+  "charset",
+  "http2",
+] }
+sha2 = "0.10"
+hex = "0.4"
+flate2 = "1"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+# CREATE_NO_WINDOW: sonst blitzt bei jedem Aufruf ein Konsolenfenster auf.
+winapi = { version = "0.3", features = ["winbase"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

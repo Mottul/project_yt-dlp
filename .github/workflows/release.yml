@@ -1,7 +1,8 @@
 name: Release
 
-# Baut die Installer für Windows und macOS und hängt sie an ein Release.
-# Auslöser: ein Tag wie v0.1.0 -- oder manuell über die Actions-Oberfläche.
+# Baut die Installer für Windows und macOS.
+#   - Tag v*        -> Installer werden an einen Release-Entwurf gehängt
+#   - manueller Lauf -> es wird nur gebaut, die Ergebnisse liegen als Artefakte
 on:
   push:
     tags:
@@ -17,15 +18,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Ein Universal-Paket für Intel und Apple Silicon in einem.
           - platform: macos-latest
-            target: universal-apple-darwin
-            label: macOS (universal)
+            label: macos-universal
+            title: macOS (universal)
+            # Ein Paket für Intel UND Apple Silicon. `universal-apple-darwin`
+            # ist kein rustup-Ziel: Tauri baut beide echten Ziele und fügt sie
+            # zusammen -- deshalb müssen beide installiert sein.
+            args: --target universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
           - platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            label: Windows (x64)
+            label: windows-x64
+            title: Windows (x64)
+            args: ''
+            rust-targets: ''
 
-    name: ${{ matrix.label }}
+    name: ${{ matrix.title }}
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -38,19 +45,21 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust-targets }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ${{ matrix.target }}
+          key: ${{ matrix.label }}
 
       - uses: tauri-apps/tauri-action@v0
+        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --target ${{ matrix.target }}
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-test', github.run_number) }}
-          releaseName: MottulVideoLoader ${{ github.ref_type == 'tag' && github.ref_name || 'Testbau' }}
+          args: ${{ matrix.args }}
+          # Leerer Tag = nur bauen, nichts veröffentlichen (manueller Lauf).
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: MottulVideoLoader ${{ github.ref_name }}
           releaseBody: |
             Installation und erster Start: siehe `docs/INSTALL.md`.
 
@@ -59,3 +68,17 @@ jobs:
             sie bestätigt.
           releaseDraft: true
           prerelease: false
+
+      - name: Ergebnisse sichern
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          # Windows legt unter target/release/bundle ab, der Universal-Build
+          # unter target/universal-apple-darwin/release/bundle.
+          path: |
+            src-tauri/target/**/bundle/**/*.dmg
+            src-tauri/target/**/bundle/**/*.exe
+            src-tauri/target/**/bundle/**/*.app.tar.gz
+          if-no-files-found: error
+          retention-days: 7

@@ -1,13 +1,19 @@
 name: Release
 
 # Baut die Installer für Windows und macOS.
-#   - Tag v*        -> Installer werden an einen Release-Entwurf gehängt
-#   - manueller Lauf -> es wird nur gebaut, die Ergebnisse liegen als Artefakte
+#   - Tag v*                      -> Installer an einen Release-Entwurf hängen
+#   - manuell mit Version          -> dasselbe, der Tag wird dabei angelegt
+#   - manuell ohne Version         -> nur bauen, Ergebnisse als Artefakt
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Zu veröffentlichende Version, z. B. v0.1.0 (leer = nur bauen)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -57,9 +63,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
-          # Leerer Tag = nur bauen, nichts veröffentlichen (manueller Lauf).
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: MottulVideoLoader ${{ github.ref_name }}
+          # Leerer Tag = nur bauen, nichts veröffentlichen.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          releaseName: MottulVideoLoader ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           releaseBody: |
             Installation und erster Start: siehe `docs/INSTALL.md`.
 
@@ -69,8 +75,9 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      # Auch bei einer Veröffentlichung nützlich: die Ergebnisse liegen dann
+      # zusätzlich sieben Tage am Lauf, ohne dass man den Entwurf öffnen muss.
       - name: Ergebnisse sichern
-        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.label }}

@@ -2,10 +2,14 @@
 
 Kurzanleitung für Anwender.
 
+Die Dateien hängen am Release unter
+[Releases](https://github.com/Mottul/project_yt-dlp/releases) — je Version
+genau eine je System:
+
 | System | Datei |
 | --- | --- |
-| Windows 10/11 (x64) | `MottulVideoLoader_<Version>_x64-setup.exe` |
-| macOS 10.15+ (Intel und Apple Silicon) | `MottulVideoLoader_<Version>_universal.dmg` |
+| Windows 10/11 (x64) | die `…-setup.exe` |
+| macOS 10.15+ (Intel und Apple Silicon) | die `…universal.dmg` |
 
 **Vorab nichts installieren.** yt-dlp und ffmpeg holt die App beim ersten Start
 selbst — weder Python noch eines der beiden Programme muss von Hand eingerichtet
@@ -15,7 +19,7 @@ werden.
 
 ## Windows
 
-1. Setup ausführen.
+1. `…-setup.exe` ausführen.
 2. SmartScreen meldet einen unbekannten Herausgeber → **Weitere Informationen**
    → **Trotzdem ausführen**. Die Pakete sind nicht signiert (siehe unten).
 3. Die Installation läuft ohne Administratorrechte für den angemeldeten Benutzer.
@@ -26,7 +30,7 @@ Einstellungen und geladene Werkzeuge liegen unter
 
 ## macOS
 
-1. DMG öffnen, **MottulVideoLoader** in den Ordner *Programme* ziehen.
+1. Die `.dmg` öffnen, **MottulVideoLoader** in den Ordner *Programme* ziehen.
 2. Beim **ersten** Start nicht doppelklicken, sondern mit gedrückter ctrl-Taste
    klicken (bzw. Rechtsklick) → **Öffnen** → im Dialog nochmals **Öffnen**.
    Gatekeeper weist einen Doppelklick sonst ab, weil die App nicht signiert und

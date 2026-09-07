@@ -76,9 +76,14 @@ Die Oberfläche ruft nichts direkt auf, sondern geht immer über `src/api.ts`.
 
 ## Veröffentlichen
 
-Ein Tag `v*` (oder ein manueller Start des Workflows *Release*) baut die
-Installer für Windows und macOS und legt sie als Entwurf eines Releases ab.
-Das macOS-Paket ist universal — es läuft auf Intel und Apple Silicon.
+Actions → **Release** → *Run workflow* → Version eintragen (z. B. `v0.1.0`).
+Der Workflow baut die Installer für Windows und macOS und hängt sie an einen
+**Release-Entwurf**; der Tag entsteht, sobald der Entwurf veröffentlicht wird.
+Ein bereits vorhandener Tag `v*` löst denselben Lauf aus. Ohne Versionsangabe
+wird nur gebaut, die Ergebnisse liegen dann sieben Tage als Artefakt am Lauf.
+
+Das macOS-Paket ist universal — es läuft auf Intel und Apple Silicon. Bauzeit
+je System rund drei bis fünf Minuten.
 
 Die Pakete sind nicht signiert; Kosten wären ein Zertifikat je Plattform. Die
 Warnungen, die Windows und macOS deshalb zeigen, sind in der Anleitung erklärt.

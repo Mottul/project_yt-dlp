@@ -1,6 +1,10 @@
 node_modules/
 dist/
+
+# Bauverzeichnisse (Werkstatt-Wurzel und alter Ort)
+/target/
 src-tauri/target/
+
 *.log
 .DS_Store
 

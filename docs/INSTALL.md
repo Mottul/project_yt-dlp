@@ -51,6 +51,23 @@ Das DMG enthält ein Universal-Paket und läuft auf Intel wie auf Apple Silicon.
 Einstellungen und geladene Werkzeuge liegen unter
 `~/Library/Application Support/com.mottul.videoloader`.
 
+## Ältere Macs (10.13 bis 11.2)
+
+Die Fenster-App braucht macOS 11.3. Für ältere Systeme liegt am Release
+**`MottulVideoLoader-Terminal-macos.zip`** — dasselbe Programm ohne Fenster:
+
+1. Entpacken, Doppelklick auf **`MottulVideoLoader.command`**.
+2. Beim ersten Mal meldet macOS „Entwickler nicht verifiziert": Rechtsklick auf
+   die Datei → **Öffnen** → im Dialog nochmals **Öffnen**.
+   Bei „ist beschädigt" einmalig im Terminal:
+   `xattr -dr com.apple.quarantine <entpackter Ordner>`
+3. Adresse einfügen, Enter. Einstellungen über einen Buchstaben: `f` Format,
+   `a` Auflösung, `o` Zielordner (Ordner ins Fenster ziehen genügt). Leere
+   Eingabe beendet.
+
+Voraussetzung ist macOS 10.13 — so weit hinunter reichen auch yt-dlp und
+ffmpeg, die das Programm nachlädt.
+
 ---
 
 ## Erster Start

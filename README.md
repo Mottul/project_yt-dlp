@@ -47,12 +47,12 @@ Prüfsummen der **entpackten** Dateien eintragen
 ```bash
 npm install
 npm run app:dev        # Fenster mit Hot Reload
-npm run app:build      # Paket für das aktuelle System (dist unter src-tauri/target)
+npm run app:build      # Paket für das aktuelle System
 
-npm run build                                   # Oberfläche: Typen + Bundle
-cargo test --manifest-path src-tauri/Cargo.toml # Rust-Tests
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo fmt --manifest-path src-tauri/Cargo.toml
+npm run build          # Oberfläche: Typen + Bundle
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
 ```
 
 Voraussetzungen: Node ≥ 22, Rust (stable). Unter Linux zusätzlich
@@ -60,19 +60,43 @@ Voraussetzungen: Node ≥ 22, Rust (stable). Unter Linux zusätzlich
 
 ## Aufbau
 
+Ein Kern, zwei Oberflächen:
+
 ```
-src/                  Oberfläche (React + TypeScript, eigenes CSS)
-  api.ts              typisierte Brücke zum Rust-Teil
-  App.tsx             die eine Seite
-src-tauri/src/
-  lib.rs              Zustand, Befehle, Startprüfung
+core/src/             Kern — kennt weder Fenster noch Terminal
   tools.rs            Laden, Prüfsummen, atomares Ablegen
   ytdlp.rs            Version ermitteln und aktuell halten
   ffmpeg.rs           feste Version, hinterlegte Prüfsummen
   queue.rs            Warteschlange, Fortschritts-Auswertung
+  paths.rs            Datenverzeichnis, Zielordner
+src/                  Fenster-Oberfläche (React + TypeScript, eigenes CSS)
+  api.ts              typisierte Brücke zum Rust-Teil
+  App.tsx             die eine Seite
+src-tauri/src/lib.rs  Fenster-App: Befehle, Zustand, Startprüfung
+cli/src/              Terminal-Variante
+  main.rs             Ablauf und Abfragen
+  ui.rs               Balken, Farben, Neuzeichnen
+  settings.rs         geteilte Einstellungsdatei
 ```
 
 Die Oberfläche ruft nichts direkt auf, sondern geht immer über `src/api.ts`.
+Beide Oberflächen hängen sich über `JobSink` in die Warteschlange ein und
+teilen sich Einstellungen und die geladenen Werkzeuge.
+
+## Terminal-Variante
+
+Für Macs, auf denen der Fenster-Unterbau nicht läuft (macOS älter als 11.3).
+Reines Rust ohne WebView — läuft ab macOS 10.13, so weit hinunter wie yt-dlp
+und ffmpeg selbst.
+
+```bash
+cargo run -p mottul-video-cli              # interaktiv
+cargo run -p mottul-video-cli -- <adresse> # direkt laden
+```
+
+Bedienung: Adresse einfügen und Enter; `f` Format, `a` Auflösung, `o` Ordner,
+leere Eingabe beendet. Der Release enthält sie als
+`MottulVideoLoader-Terminal-macos.zip` samt Doppelklick-Starter.
 
 ## Veröffentlichen
 

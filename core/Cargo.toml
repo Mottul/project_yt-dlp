@@ -1,0 +1,22 @@
+[package]
+name = "mottul-video-core"
+description = "Werkzeug-Einrichtung, Download-Warteschlange und Fortschritts-Auswertung — ohne Oberfläche."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+hex.workspace = true
+flate2.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# CREATE_NO_WINDOW: sonst blitzt bei jedem Aufruf ein Konsolenfenster auf.
+winapi = { version = "0.3", features = ["winbase"] }

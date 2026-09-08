@@ -54,7 +54,6 @@ jobs:
           targets: ${{ matrix.rust-targets }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
           key: ${{ matrix.label }}
 
       - uses: tauri-apps/tauri-action@v0
@@ -75,17 +74,43 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      # Terminal-Variante für Macs, auf denen der Fenster-Unterbau nicht läuft
+      # (macOS vor 11.3). Reines Rust ohne WebView, deshalb reicht 10.13 --
+      # so weit hinunter reichen auch yt-dlp und ffmpeg.
+      - name: Terminal-Variante bauen
+        if: matrix.platform == 'macos-latest'
+        run: |
+          MACOSX_DEPLOYMENT_TARGET=10.13 cargo build --release -p mottul-video-cli --target x86_64-apple-darwin
+          MACOSX_DEPLOYMENT_TARGET=11.0  cargo build --release -p mottul-video-cli --target aarch64-apple-darwin
+          mkdir -p pack/MottulVideoLoader-Terminal
+          lipo -create -output pack/MottulVideoLoader-Terminal/mottulvideoloader \
+            target/x86_64-apple-darwin/release/mottulvideoloader \
+            target/aarch64-apple-darwin/release/mottulvideoloader
+          cp cli/packaging/MottulVideoLoader.command cli/packaging/LIESMICH.txt pack/MottulVideoLoader-Terminal/
+          chmod +x pack/MottulVideoLoader-Terminal/MottulVideoLoader.command
+          (cd pack && zip -r ../MottulVideoLoader-Terminal-macos.zip MottulVideoLoader-Terminal)
+          echo "--- Zielversionen der fertigen Datei ---"
+          otool -l pack/MottulVideoLoader-Terminal/mottulvideoloader | grep -E "minos|platform" | head -4
+
+      - name: Terminal-Variante an den Release hängen
+        if: matrix.platform == 'macos-latest' && (github.ref_type == 'tag' || inputs.tag != '')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}" \
+            MottulVideoLoader-Terminal-macos.zip --clobber
+
       # Auch bei einer Veröffentlichung nützlich: die Ergebnisse liegen dann
       # zusätzlich sieben Tage am Lauf, ohne dass man den Entwurf öffnen muss.
       - name: Ergebnisse sichern
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.label }}
-          # Windows legt unter target/release/bundle ab, der Universal-Build
-          # unter target/universal-apple-darwin/release/bundle.
+          # Seit dem Werkstatt-Zuschnitt liegt das Bauverzeichnis im
+          # Wurzelverzeichnis, nicht mehr unter src-tauri.
           path: |
-            src-tauri/target/**/bundle/**/*.dmg
-            src-tauri/target/**/bundle/**/*.exe
-            src-tauri/target/**/bundle/**/*.app.tar.gz
+            target/**/bundle/**/*.dmg
+            target/**/bundle/**/*.exe
+            MottulVideoLoader-Terminal-macos.zip
           if-no-files-found: error
           retention-days: 7

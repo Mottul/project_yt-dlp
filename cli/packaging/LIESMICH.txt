@@ -1,0 +1,39 @@
+MottulVideoLoader — Terminal-Variante
+=====================================
+
+Für Macs, auf denen die Fenster-App nicht läuft (macOS älter als 11.3).
+Benötigt macOS 10.13 oder neuer.
+
+STARTEN
+-------
+Doppelklick auf "MottulVideoLoader.command".
+
+Beim ersten Mal meldet macOS "Entwickler nicht verifiziert" — die Datei ist
+nicht signiert. Dann einmalig:
+
+    Rechtsklick auf MottulVideoLoader.command  →  Öffnen  →  im Dialog Öffnen
+
+Meldet macOS stattdessen "ist beschädigt", liegt es am Quarantäne-Merkmal des
+Downloads. Im Terminal einmal:
+
+    xattr -dr com.apple.quarantine "<Ordner dieser Datei>"
+
+BEDIENUNG
+---------
+Adresse einfügen, Enter — fertig. Einstellungen über einen Buchstaben:
+
+    f  Format (Video MP4 / Nur Ton MP3 / Nur Ton M4A)
+    a  höchste Auflösung
+    o  Zielordner (Ordner ins Fenster ziehen genügt)
+
+Leere Eingabe beendet das Programm. Mehrere Adressen auf einmal einfügen geht
+auch — sie laufen nacheinander durch, zwei gleichzeitig.
+
+ERSTER START
+------------
+yt-dlp und ffmpeg werden selbsttätig geladen (rund 90 MB) und vor dem Ablegen
+gegen ihre Prüfsumme geprüft. Danach wird bei jedem Start nur noch geschaut,
+ob es eine neuere yt-dlp-Version gibt.
+
+Die Werkzeuge liegen unter:
+    ~/Library/Application Support/com.mottul.videoloader/bin

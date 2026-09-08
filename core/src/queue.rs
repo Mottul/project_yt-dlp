@@ -1,5 +1,9 @@
 //! Warteschlange der Downloads: startet yt-dlp, liest den Fortschritt Zeile
 //! fuer Zeile mit und meldet jede Aenderung an die Oberflaeche.
+//!
+//! Die Oberflaeche haengt sich ueber [`JobSink`] ein -- der Kern weiss nicht,
+//! ob daraus ein Fortschrittsbalken im Fenster oder eine Zeile im Terminal
+//! wird.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -7,11 +11,21 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::oneshot;
 
-pub const JOB_EVENT: &str = "job-update";
+/// Nimmt jede Aenderung an einem Auftrag entgegen. Wird aus Arbeitsfaeden
+/// aufgerufen, muss also selbst fuer Ordnung sorgen.
+pub trait JobSink: Send + Sync + 'static {
+    fn on_update(&self, job: &Job);
+}
+
+/// Verwirft alle Meldungen -- fuer Tests und einfache Faelle.
+pub struct SilentSink;
+
+impl JobSink for SilentSink {
+    fn on_update(&self, _job: &Job) {}
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -182,42 +196,53 @@ struct Inner {
 #[derive(Clone)]
 pub struct Manager {
     inner: Arc<Mutex<Inner>>,
+    sink: Arc<dyn JobSink>,
+    /// Eigener Laufzeitunterbau: die Warteschlange laeuft unabhaengig davon,
+    /// ob die Oberflaeche gerade in einem async-Zusammenhang steckt.
+    runtime: Arc<tokio::runtime::Runtime>,
     concurrency: usize,
 }
 
-impl Default for Manager {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(Inner::default())),
-            concurrency: 2,
-        }
-    }
-}
-
 impl Manager {
+    pub fn new(sink: Arc<dyn JobSink>) -> std::io::Result<Self> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Inner::default())),
+            sink,
+            runtime: Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?,
+            ),
+            concurrency: 2,
+        })
+    }
+
+    /// Zugriff auf den Laufzeitunterbau, damit die Oberflaeche eigene
+    /// async-Arbeiten (etwa die Werkzeugpruefung) darauf ausfuehren kann.
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
     pub fn list(&self) -> Vec<Job> {
         self.inner.lock().unwrap().jobs.clone()
     }
 
+    /// Laeuft gerade ein Auftrag? Dann die Werkzeuge nicht ersetzen.
     pub fn busy(&self) -> bool {
         self.inner.lock().unwrap().active > 0
     }
 
-    fn emit(app: &AppHandle, job: &Job) {
-        let _ = app.emit(JOB_EVENT, job.clone());
-    }
-
-    fn patch<F: FnOnce(&mut Job)>(&self, app: &AppHandle, id: &str, f: F) {
+    fn patch<F: FnOnce(&mut Job)>(&self, id: &str, f: F) {
         let mut guard = self.inner.lock().unwrap();
         if let Some(job) = guard.jobs.iter_mut().find(|j| j.id == id) {
             f(job);
             let copy = job.clone();
             drop(guard);
-            Self::emit(app, &copy);
+            self.sink.on_update(&copy);
         }
     }
 
-    pub fn enqueue(&self, app: &AppHandle, req: EnqueueRequest, bin_dir: PathBuf) -> String {
+    pub fn enqueue(&self, req: EnqueueRequest, bin_dir: PathBuf) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         let job = Job {
             id: id.clone(),
@@ -238,13 +263,13 @@ impl Manager {
             guard.jobs.insert(0, job.clone());
             guard.requests.insert(id.clone(), req);
         }
-        Self::emit(app, &job);
-        self.schedule(app, bin_dir);
+        self.sink.on_update(&job);
+        self.schedule(bin_dir);
         id
     }
 
-    /// Startet wartende Jobs, solange Plaetze frei sind.
-    fn schedule(&self, app: &AppHandle, bin_dir: PathBuf) {
+    /// Startet wartende Auftraege, solange Plaetze frei sind.
+    fn schedule(&self, bin_dir: PathBuf) {
         loop {
             let next = {
                 let mut guard = self.inner.lock().unwrap();
@@ -265,29 +290,28 @@ impl Manager {
                 guard.active += 1;
                 let req = guard.requests.get(&id).cloned();
                 drop(guard);
-                Self::emit(app, &copy);
+                self.sink.on_update(&copy);
                 req.map(|r| (id, r))
             };
             let Some((id, req)) = next else { return };
 
             let manager = self.clone();
-            let app_handle = app.clone();
             let dir = bin_dir.clone();
-            tauri::async_runtime::spawn(async move {
-                manager.run(&app_handle, &id, req, &dir).await;
+            self.runtime.spawn(async move {
+                manager.run(&id, req, &dir).await;
                 {
                     let mut guard = manager.inner.lock().unwrap();
                     guard.active = guard.active.saturating_sub(1);
                 }
-                manager.schedule(&app_handle, dir);
+                manager.schedule(dir);
             });
         }
     }
 
-    async fn run(&self, app: &AppHandle, id: &str, req: EnqueueRequest, bin_dir: &Path) {
+    async fn run(&self, id: &str, req: EnqueueRequest, bin_dir: &Path) {
         let ytdlp = crate::ytdlp::binary_path(bin_dir);
         if !ytdlp.exists() {
-            self.patch(app, id, |job| {
+            self.patch(id, |job| {
                 job.status = JobStatus::Error;
                 job.error = Some("yt-dlp fehlt — bitte zuerst die Werkzeuge einrichten.".into());
             });
@@ -306,7 +330,7 @@ impl Manager {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(err) => {
-                self.patch(app, id, |job| {
+                self.patch(id, |job| {
                     job.status = JobStatus::Error;
                     job.error = Some(format!("Start fehlgeschlagen: {err}"));
                 });
@@ -328,7 +352,7 @@ impl Manager {
         // abbruchsicher, in einem select! koennte also mitten in einer Zeile
         // abgebrochen und der Rest verworfen werden.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        tauri::async_runtime::spawn(async move {
+        self.runtime.spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if tx.send(line).is_err() {
@@ -339,7 +363,7 @@ impl Manager {
 
         let err_tail = Arc::new(Mutex::new(Vec::<String>::new()));
         let tail = err_tail.clone();
-        tauri::async_runtime::spawn(async move {
+        self.runtime.spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if line.trim().is_empty() {
@@ -359,7 +383,7 @@ impl Manager {
                     let _ = child.kill().await;
                     break child.wait().await;
                 }
-                Some(line) = rx.recv() => self.handle_line(app, id, &line),
+                Some(line) = rx.recv() => self.handle_line(id, &line),
                 // `wait()` ist abbruchsicher und darf hier wiederholt werden.
                 res = child.wait() => break res,
             }
@@ -368,7 +392,7 @@ impl Manager {
         // Was noch im Puffer liegt, gehoert zum Ergebnis: der Kanal endet erst,
         // wenn die lesende Aufgabe fertig ist.
         while let Some(line) = rx.recv().await {
-            self.handle_line(app, id, &line);
+            self.handle_line(id, &line);
         }
 
         self.inner.lock().unwrap().cancels.remove(id);
@@ -385,7 +409,7 @@ impl Manager {
         }
 
         match status {
-            Ok(code) if code.success() => self.patch(app, id, |job| {
+            Ok(code) if code.success() => self.patch(id, |job| {
                 job.status = JobStatus::Done;
                 job.progress = 1.0;
                 job.speed = None;
@@ -402,21 +426,21 @@ impl Manager {
                     .unwrap_or_else(|| {
                         format!("yt-dlp endete mit Code {}", code.code().unwrap_or(-1))
                     });
-                self.patch(app, id, |job| {
+                self.patch(id, |job| {
                     job.status = JobStatus::Error;
                     job.error = Some(message.clone());
                 });
             }
-            Err(err) => self.patch(app, id, |job| {
+            Err(err) => self.patch(id, |job| {
                 job.status = JobStatus::Error;
                 job.error = Some(err.to_string());
             }),
         }
     }
 
-    fn handle_line(&self, app: &AppHandle, id: &str, line: &str) {
+    fn handle_line(&self, id: &str, line: &str) {
         if let Some(progress) = parse_progress(line) {
-            self.patch(app, id, |job| {
+            self.patch(id, |job| {
                 if let Some(p) = progress.percent {
                     job.progress = p;
                 }
@@ -426,14 +450,14 @@ impl Manager {
         }
         if let Some(dest) = parse_destination(line) {
             let title = title_from_path(&dest);
-            self.patch(app, id, |job| {
+            self.patch(id, |job| {
                 job.output_file = Some(dest.clone());
                 job.title = Some(title.clone());
             });
         }
     }
 
-    pub fn cancel(&self, app: &AppHandle, id: &str) {
+    pub fn cancel(&self, id: &str) {
         let sender = {
             let mut guard = self.inner.lock().unwrap();
             let Some(job) = guard.jobs.iter_mut().find(|j| j.id == id) else {
@@ -451,7 +475,7 @@ impl Manager {
             let copy = job.clone();
             let sender = guard.cancels.remove(id);
             drop(guard);
-            Self::emit(app, &copy);
+            self.sink.on_update(&copy);
             sender
         };
         if let Some(tx) = sender {

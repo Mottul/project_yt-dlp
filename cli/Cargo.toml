@@ -1,0 +1,16 @@
+[package]
+name = "mottul-video-cli"
+description = "Terminal-Variante des MottulVideoLoader — für Systeme ohne den Fenster-Unterbau."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "mottulvideoloader"
+path = "src/main.rs"
+
+[dependencies]
+mottul-video-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

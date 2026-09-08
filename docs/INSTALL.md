@@ -9,7 +9,7 @@ genau eine je System:
 | System | Datei |
 | --- | --- |
 | Windows 10/11 (x64) | die `…-setup.exe` |
-| macOS 10.15+ (Intel und Apple Silicon) | die `…universal.dmg` |
+| macOS 11.3+ (Intel und Apple Silicon) | die `…universal.dmg` |
 
 **Vorab nichts installieren.** yt-dlp und ffmpeg holt die App beim ersten Start
 selbst — weder Python noch eines der beiden Programme muss von Hand eingerichtet
@@ -29,6 +29,10 @@ Einstellungen und geladene Werkzeuge liegen unter
 `%APPDATA%\com.mottul.videoloader`.
 
 ## macOS
+
+> **Mindestens macOS 11.3 (Big Sur).** Das ist keine Einstellung, sondern eine
+> Grenze des verwendeten Fenster-Unterbaus: er meldet eine WebKit-Methode an,
+> die es erst ab 11.3 gibt. Auf älteren Systemen startet die App nicht.
 
 1. Die `.dmg` öffnen, **MottulVideoLoader** in den Ordner *Programme* ziehen.
 2. Beim **ersten** Start nicht doppelklicken, sondern mit gedrückter ctrl-Taste

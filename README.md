@@ -82,8 +82,12 @@ Der Workflow baut die Installer für Windows und macOS und hängt sie an einen
 Ein bereits vorhandener Tag `v*` löst denselben Lauf aus. Ohne Versionsangabe
 wird nur gebaut, die Ergebnisse liegen dann sieben Tage als Artefakt am Lauf.
 
-Das macOS-Paket ist universal — es läuft auf Intel und Apple Silicon. Bauzeit
-je System rund drei bis fünf Minuten.
+Das macOS-Paket ist universal — es läuft auf Intel und Apple Silicon, verlangt
+aber **macOS 11.3 oder neuer**: `wry` registriert eine WKWebView-Methode
+(`webView:navigationAction:didBecomeDownload:`), die es erst ab 11.3 gibt, und
+bricht auf älteren Systemen beim Start ab. `minimumSystemVersion` in
+`tauri.conf.json` steht deshalb auf 11.3, damit macOS das sauber meldet, statt
+die App abstürzen zu lassen. Bauzeit je System rund drei bis fünf Minuten.
 
 Die Pakete sind nicht signiert; Kosten wären ein Zertifikat je Plattform. Die
 Warnungen, die Windows und macOS deshalb zeigen, sind in der Anleitung erklärt.

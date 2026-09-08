@@ -89,8 +89,15 @@ jobs:
           cp cli/packaging/MottulVideoLoader.command cli/packaging/LIESMICH.txt pack/MottulVideoLoader-Terminal/
           chmod +x pack/MottulVideoLoader-Terminal/MottulVideoLoader.command
           (cd pack && zip -r ../MottulVideoLoader-Terminal-macos.zip MottulVideoLoader-Terminal)
-          echo "--- Zielversionen der fertigen Datei ---"
-          otool -l pack/MottulVideoLoader-Terminal/mottulvideoloader | grep -E "minos|platform" | head -4
+          # Zusage pruefen statt nur melden: der Intel-Teil MUSS auf 10.13
+          # zielen, sonst startet er auf High Sierra nicht.
+          bin=pack/MottulVideoLoader-Terminal/mottulvideoloader
+          x86=$(otool -arch x86_64 -l "$bin" | awk '/minos/ {print $2; exit}')
+          arm=$(otool -arch arm64  -l "$bin" | awk '/minos/ {print $2; exit}')
+          echo "Zielversionen: Intel $x86 · Apple Silicon $arm"
+          test "$x86" = "10.13" || { echo "::error::Intel-Teil zielt auf $x86 statt 10.13"; exit 1; }
+          test "$arm" = "11.0"  || { echo "::error::ARM-Teil zielt auf $arm statt 11.0"; exit 1; }
+          lipo -info "$bin"
 
       - name: Terminal-Variante an den Release hängen
         if: matrix.platform == 'macos-latest' && (github.ref_type == 'tag' || inputs.tag != '')

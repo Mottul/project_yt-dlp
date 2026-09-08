@@ -91,9 +91,18 @@ jobs:
           (cd pack && zip -r ../MottulVideoLoader-Terminal-macos.zip MottulVideoLoader-Terminal)
           # Zusage pruefen statt nur melden: der Intel-Teil MUSS auf 10.13
           # zielen, sonst startet er auf High Sierra nicht.
+          # Bei alten Zielversionen schreibt die Werkzeugkette
+          # LC_VERSION_MIN_MACOSX (Feld `version`), sonst LC_BUILD_VERSION
+          # (Feld `minos`) -- beide Schreibweisen zaehlen.
           bin=pack/MottulVideoLoader-Terminal/mottulvideoloader
-          x86=$(otool -arch x86_64 -l "$bin" | awk '/minos/ {print $2; exit}')
-          arm=$(otool -arch arm64  -l "$bin" | awk '/minos/ {print $2; exit}')
+          minos_of() {
+            otool -arch "$1" -l "$bin" | awk '
+              /LC_VERSION_MIN_MACOSX|LC_BUILD_VERSION/ { want = 1; next }
+              want && ($1 == "minos" || $1 == "version") { print $2; exit }
+            '
+          }
+          x86=$(minos_of x86_64)
+          arm=$(minos_of arm64)
           echo "Zielversionen: Intel $x86 · Apple Silicon $arm"
           test "$x86" = "10.13" || { echo "::error::Intel-Teil zielt auf $x86 statt 10.13"; exit 1; }
           test "$arm" = "11.0"  || { echo "::error::ARM-Teil zielt auf $arm statt 11.0"; exit 1; }

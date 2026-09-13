@@ -86,8 +86,12 @@ teilen sich Einstellungen und die geladenen Werkzeuge.
 ## Terminal-Variante
 
 Für Macs, auf denen der Fenster-Unterbau nicht läuft (macOS älter als 11.3).
-Reines Rust ohne WebView — läuft ab macOS 10.13, so weit hinunter wie yt-dlp
-und ffmpeg selbst.
+Reines Rust ohne WebView — läuft ab macOS 10.13.
+
+Ab 10.15 läuft yt-dlp als fertiges Programm. Darunter gibt es keines mehr
+(`yt-dlp_macos_legacy` ist entfallen): das Programm erkennt das beim
+Einrichten, weicht auf die Python-Zipapp aus und startet sie mit einem auf dem
+Rechner gefundenen Python 3.9+. Fehlt Python, sagt es, was zu tun ist.
 
 ```bash
 cargo run -p mottul-video-cli              # interaktiv

@@ -35,5 +35,21 @@ yt-dlp und ffmpeg werden selbsttätig geladen (rund 90 MB) und vor dem Ablegen
 gegen ihre Prüfsumme geprüft. Danach wird bei jedem Start nur noch geschaut,
 ob es eine neuere yt-dlp-Version gibt.
 
+MACS VOR 10.15 — EINMALIG PYTHON
+--------------------------------
+yt-dlp wird nur noch für macOS 10.15 oder neuer gebaut. Auf 10.13 und 10.14
+lädt das fertige Programm zwar herunter, startet aber nicht. Das Programm
+merkt das und nimmt stattdessen die Python-Fassung von yt-dlp — dafür muss
+Python 3 auf dem Mac liegen:
+
+    1. python.org/downloads/macos öffnen, Python 3 installieren
+       (mindestens 3.9; eine Fassung wählen, die macOS 10.13 noch nennt).
+    2. Im Ordner "Python 3.x" unter Programme einmal
+       "Install Certificates.command" doppelklicken.
+    3. MottulVideoLoader neu starten.
+
+In der Statuszeile steht dann "yt-dlp <version> (über Python)".
+Fehlt Python, schreibt das Programm genau hin, was zu tun ist.
+
 Die Werkzeuge liegen unter:
     ~/Library/Application Support/com.mottul.videoloader/bin

@@ -309,17 +309,17 @@ impl Manager {
     }
 
     async fn run(&self, id: &str, req: EnqueueRequest, bin_dir: &Path) {
-        let ytdlp = crate::ytdlp::binary_path(bin_dir);
-        if !ytdlp.exists() {
+        let Some(launcher) = crate::ytdlp::resolve_launcher(bin_dir) else {
             self.patch(id, |job| {
                 job.status = JobStatus::Error;
                 job.error = Some("yt-dlp fehlt — bitte zuerst die Werkzeuge einrichten.".into());
             });
             return;
-        }
+        };
 
-        let mut cmd = tokio::process::Command::new(&ytdlp);
-        cmd.args(build_args(&req, bin_dir))
+        let mut cmd = tokio::process::Command::new(launcher.program());
+        cmd.args(launcher.prefix())
+            .args(build_args(&req, bin_dir))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);

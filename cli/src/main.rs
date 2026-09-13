@@ -96,10 +96,20 @@ fn main() {
     if status.ytdlp_version.is_none() {
         println!();
         println!("  {}", paint(RED, "Ohne yt-dlp geht es nicht weiter."));
-        println!(
-            "  {}",
-            paint(DIM, "Internetverbindung prüfen und erneut starten.")
-        );
+        // Den wirklichen Grund zeigen. Frueher stand hier pauschal
+        // „Internetverbindung prüfen" -- das schickt auf die falsche Fährte,
+        // wenn der Download geklappt hat und nur der Start scheitert.
+        match &status.last_error {
+            Some(err) => {
+                for line in err.lines() {
+                    println!("  {}", paint(DIM, line));
+                }
+            }
+            None => println!(
+                "  {}",
+                paint(DIM, "Internetverbindung prüfen und erneut starten.")
+            ),
+        }
         wait_for_enter();
         std::process::exit(1);
     }
@@ -163,11 +173,22 @@ fn print_status(status: &core::ToolsStatus) {
     } else {
         "aktuell"
     };
+    // Auf alten Macs laeuft yt-dlp ueber Python -- das gehoert in die Zeile,
+    // damit klar ist, was da eigentlich arbeitet.
+    let mode = match status.ytdlp_mode.as_deref() {
+        Some("Python") => " (über Python)",
+        _ => "",
+    };
     println!(
         "  {}",
-        paint(DIM, &format!("yt-dlp {ytdlp} · ffmpeg {ffmpeg} · {mark}"))
+        paint(
+            DIM,
+            &format!("yt-dlp {ytdlp}{mode} · ffmpeg {ffmpeg} · {mark}")
+        )
     );
-    if let Some(err) = &status.last_error {
+    // Wenn yt-dlp gar nicht da ist, steht der Grund gleich im Abbruchtext --
+    // hier nur Hinweise, mit denen es trotzdem weitergeht.
+    if let (Some(err), true) = (&status.last_error, status.ytdlp_version.is_some()) {
         println!("  {}", paint(RED, &format!("Hinweis: {err}")));
     }
 }

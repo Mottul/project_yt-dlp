@@ -65,8 +65,29 @@ Die Fenster-App braucht macOS 11.3. Für ältere Systeme liegt am Release
    `a` Auflösung, `o` Zielordner (Ordner ins Fenster ziehen genügt). Leere
    Eingabe beendet.
 
-Voraussetzung ist macOS 10.13 — so weit hinunter reichen auch yt-dlp und
-ffmpeg, die das Programm nachlädt.
+### Python auf Macs vor 10.15
+
+yt-dlp wird nur noch für **macOS 10.15 oder neuer** gebaut; die frühere Fassung
+`yt-dlp_macos_legacy` gibt es nicht mehr. Auf 10.13 und 10.14 lädt das fertige
+Programm zwar herunter, startet aber nicht.
+
+MottulVideoLoader merkt das selbst und weicht auf die plattformunabhängige
+Python-Fassung von yt-dlp aus. Dafür muss einmalig **Python 3** auf dem Mac
+liegen:
+
+1. [python.org/downloads/macos](https://www.python.org/downloads/macos/) öffnen
+   und Python 3 installieren — mindestens 3.9, und eine Fassung wählen, deren
+   Installer macOS 10.13 noch nennt.
+2. Danach im Ordner „Python 3.x" (unter *Programme*) einmal
+   **`Install Certificates.command`** doppelklicken. Ohne das scheitern
+   verschlüsselte Verbindungen später mit einem Zertifikatsfehler.
+3. MottulVideoLoader starten. Er findet Python selbst, lädt die passende
+   yt-dlp-Fassung (~3 MB statt ~37 MB) und meldet in der Statuszeile
+   `yt-dlp <version> (über Python)`.
+
+Fehlt Python, sagt das Programm genau das — und was zu tun ist.
+
+ffmpeg ist davon nicht betroffen: die mitgelieferte Fassung läuft ab 10.13.
 
 ---
 

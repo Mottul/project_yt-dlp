@@ -1,7 +1,7 @@
 {
   "name": "mottul-video-loader",
   "productName": "MottulVideoLoader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Schlanker Video-Downloader auf Basis von yt-dlp (Tauri).",
   "type": "module",

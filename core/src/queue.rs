@@ -11,7 +11,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::oneshot;
 
 use crate::auth::{explain_error, CookieBrowser};
@@ -134,6 +134,36 @@ pub fn parse_destination(line: &str) -> Option<String> {
     None
 }
 
+/// Eine Zeile aus der Pipe: Zeilenende weg, ungueltiges UTF-8 ersetzt statt
+/// verworfen.
+pub fn decode_line(raw: &[u8]) -> String {
+    let text = String::from_utf8_lossy(raw);
+    text.trim_end_matches(['\r', '\n']).to_string()
+}
+
+/// Liest Zeilen, bis der Strom endet, und gibt jede weiter.
+///
+/// Bewusst Bytes statt `lines()`: Das endet bei der ersten Zeile, die kein
+/// gueltiges UTF-8 ist. Dann ist die Pipe zu, und yt-dlp scheitert unter
+/// Windows beim naechsten Schreiben mit „Unable to download video: [Errno 22]
+/// Invalid argument“ -- so bei einem ARTE-Titel mit geschuetztem Leerzeichen
+/// (0xA0 in cp1252), noch vor dem ersten Fortschritt.
+pub async fn read_lines<R, F>(reader: R, mut on_line: F)
+where
+    R: AsyncRead + Unpin,
+    F: FnMut(String),
+{
+    let mut reader = BufReader::new(reader);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => on_line(decode_line(&buf)),
+        }
+    }
+}
+
 /// Dateiname ohne Endung -- dient als Titel in der Liste.
 pub fn title_from_path(path: &str) -> String {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -149,6 +179,11 @@ pub fn build_args(req: &EnqueueRequest, bin_dir: &Path, deno: Option<&Path>) -> 
     let mut args: Vec<String> = vec![
         "--newline".into(),
         "--no-playlist".into(),
+        // Unter Windows schreibt yt-dlp in eine Pipe sonst in der
+        // Systemkodierung (cp1252) -- „ä“ oder ein geschuetztes Leerzeichen
+        // kaemen als einzelnes Byte an, das kein UTF-8 ist.
+        "--encoding".into(),
+        "utf-8".into(),
         "--ffmpeg-location".into(),
         bin_dir.to_string_lossy().into_owned(),
     ];
@@ -364,34 +399,27 @@ impl Manager {
         let stdout = child.stdout.take().expect("stdout ist gesetzt");
         let stderr = child.stderr.take().expect("stderr ist gesetzt");
 
-        // Beide Ausgaben lesen eigene Aufgaben: `next_line()` ist nicht
-        // abbruchsicher, in einem select! koennte also mitten in einer Zeile
-        // abgebrochen und der Rest verworfen werden.
+        // Beide Ausgaben lesen eigene Aufgaben: Lesen ist nicht abbruchsicher,
+        // in einem select! koennte also mitten in einer Zeile abgebrochen und
+        // der Rest verworfen werden. Gelesen wird bis zum Ende, auch wenn
+        // niemand mehr zuhoert -- eine geschlossene Pipe liesse yt-dlp scheitern.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        self.runtime.spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
+        self.runtime.spawn(read_lines(stdout, move |line| {
+            let _ = tx.send(line);
+        }));
 
         let err_tail = Arc::new(Mutex::new(Vec::<String>::new()));
         let tail = err_tail.clone();
-        self.runtime.spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let mut guard = tail.lock().unwrap();
-                guard.push(line);
-                if guard.len() > 20 {
-                    guard.remove(0);
-                }
+        self.runtime.spawn(read_lines(stderr, move |line| {
+            if line.trim().is_empty() {
+                return;
             }
-        });
+            let mut guard = tail.lock().unwrap();
+            guard.push(line);
+            if guard.len() > 20 {
+                guard.remove(0);
+            }
+        }));
 
         let status = loop {
             tokio::select! {
@@ -625,6 +653,38 @@ mod tests {
             output_dir: "/ziel".into(),
             cookies: None,
         }
+    }
+
+    #[test]
+    fn verlangt_utf8_von_yt_dlp() {
+        let args = build_args(&req(Format::Video, None), Path::new("/bin"), None);
+        let idx = args.iter().position(|a| a == "--encoding").unwrap();
+        assert_eq!(args[idx + 1], "utf-8");
+    }
+
+    #[test]
+    fn zeile_aus_der_pipe() {
+        // So kam der ARTE-Titel ohne --encoding an: 0xA0 ist cp1252
+        let cp1252 = decode_line(b"Mein Maga-Leben |\xa0ARTE Reportage\r\n");
+        assert_eq!(cp1252, "Mein Maga-Leben |\u{fffd}ARTE Reportage");
+        let utf8 = decode_line("Mein Maga-Leben |\u{a0}ARTE Reportage\n".as_bytes());
+        assert_eq!(utf8, "Mein Maga-Leben |\u{a0}ARTE Reportage");
+        assert_eq!(decode_line(b""), "");
+    }
+
+    /// Eine ungueltige Zeile darf das Lesen nicht beenden -- sonst ist die
+    /// Pipe zu, und yt-dlp scheitert mit „[Errno 22] Invalid argument“.
+    #[tokio::test]
+    async fn liest_nach_ungueltigem_utf8_weiter() {
+        let data: &[u8] = b"[download] Destination: C:\\z\\Leben |\xa0ARTE.mp4\n\
+            [download]   1.0% of 10.00MiB\n\
+            letzte ohne Zeilenende";
+        let mut lines = Vec::new();
+        read_lines(data, |l| lines.push(l)).await;
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(lines[0].ends_with("ARTE.mp4"));
+        assert_eq!(parse_progress(&lines[1]).unwrap().percent, Some(0.01));
+        assert_eq!(lines[2], "letzte ohne Zeilenende");
     }
 
     #[test]

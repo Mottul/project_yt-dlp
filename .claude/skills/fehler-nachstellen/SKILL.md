@@ -1,0 +1,146 @@
+---
+name: fehler-nachstellen
+description: Einen Fehler aus dem MottulVideoLoader nachstellen und eingrenzen – yt-dlp mit den Werkzeugen der App ausführlich laufen lassen, Rohbytes der Pipe prüfen, einen Download über den Kern per Wegwerf-Starter, Gegenprobe gegen den alten Stand. Verwenden, wenn eine Fehlermeldung aus dem VideoLoader gemeldet wird oder ein Video nicht lädt.
+---
+
+# Fehler nachstellen
+
+Ein gemeldeter Fehler gilt erst als verstanden, wenn er sich mit den Werkzeugen der App
+nachstellen lässt, und erst als behoben, wenn die Gegenprobe ihn mit dem alten Stand zeigt und
+mit dem Fix nicht mehr.
+
+## 1. yt-dlp ausführlich, mit den Werkzeugen der App
+
+Nie ein yt-dlp vom System nehmen: `<App-Daten>/bin` (Windows
+`%APPDATA%\com.mottul.videoloader\bin`) enthält `yt-dlp`, `ffmpeg`, `ffprobe`, `deno`.
+
+```bash
+B="$APPDATA/com.mottul.videoloader/bin"
+"$B/yt-dlp.exe" -v --simulate --no-playlist --cookies-from-browser firefox \
+  --js-runtimes "deno:$B/deno.exe" -- "<adresse>"
+```
+
+Lesen:
+
+- `JS runtimes: none` → keine Laufzeit: „age-restricted“ trotz Cookies, fehlende Formate,
+  „Signature/n challenge solving failed“.
+- `Found YouTube account cookies` → Cookies kommen an. „requiring account age-verification“ →
+  das Konto ist nicht altersbestätigt (mit Laufzeit lädt es oft trotzdem).
+- Die Ursache steht oft in einer **Warnung vor** der letzten Fehlerzeile.
+
+## 2. Rohbytes der Pipe
+
+Der Kern startet yt-dlp ohne Konsole (`CREATE_NO_WINDOW`) und liest Pipes. So nachstellen, wie es
+ankommt (Python mit `-I`, im Scratchpad):
+
+```python
+import subprocess
+p = subprocess.run([b + "/yt-dlp.exe", "--skip-download", "--print", "title", "--", url],
+                   capture_output=True, creationflags=0x08000000)
+print(p.stdout)            # Rohbytes
+p.stdout.decode("utf-8")   # wirft, wenn es kein UTF-8 ist
+```
+
+Ohne `--encoding utf-8` schreibt yt-dlp unter Windows cp1252 („ä“ = `0xE4`, geschütztes
+Leerzeichen = `0xA0`).
+
+## 3. Download über den Kern (Wegwerf-Starter)
+
+Gleiche Argumente, Pipes und Fehlertexte wie in der App, ohne die Einstellungen des Nutzers
+anzufassen. Im Scratchpad ein Paket `kern-probe` anlegen:
+
+```toml
+[package]
+name = "kern-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+mottul-video-core = { path = "<repo>/core" }
+
+[workspace]
+```
+
+```rust
+use std::sync::Arc;
+use std::time::Duration;
+
+use mottul_video_core::queue::{EnqueueRequest, Job, JobSink, JobStatus, Manager};
+use mottul_video_core::{paths, tools, CookieBrowser, Format};
+
+struct Print;
+impl JobSink for Print {
+    fn on_update(&self, job: &Job) {
+        if job.status != JobStatus::Running || job.error.is_some() {
+            eprintln!("[{:?}] {:?} {:?}", job.status, job.title, job.error);
+        }
+    }
+}
+
+fn main() {
+    let out = std::env::args().nth(1).expect("Zielordner");
+    let url = std::env::args().nth(2).expect("Adresse");
+    let m = Manager::new(Arc::new(Print)).unwrap();
+    let req = EnqueueRequest {
+        url,
+        format: Format::Video,
+        max_height: None,
+        output_dir: out,
+        cookies: Some(CookieBrowser::Firefox),
+    };
+    let id = m.enqueue(req, tools::bin_dir(&paths::data_dir()));
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let job = m.list().into_iter().find(|j| j.id == id).unwrap();
+        // Fortschritt genügt als Beleg -- nie das ganze Video laden
+        if job.progress >= 0.02 && job.status == JobStatus::Running {
+            println!("FORTSCHRITT {:.1} % -> {:?}", job.progress * 100.0, job.output_file);
+            m.cancel(&id);
+            std::thread::sleep(Duration::from_secs(2));
+            break;
+        }
+        if matches!(job.status, JobStatus::Done | JobStatus::Error | JobStatus::Canceled) {
+            println!("ENDE {:?}: {:?}", job.status, job.error);
+            break;
+        }
+    }
+}
+```
+
+Starten mit `cargo run -q --target-dir <repo>/target -- <zielordner im Scratchpad> <adresse>`
+(`--target-dir` spart den Neubau der Abhängigkeiten).
+
+## 4. Gegenprobe
+
+```bash
+git stash push core/src/<datei>.rs   # alter Stand: der gemeldete Fehler muss kommen
+# Starter laufen lassen
+git stash pop                        # mit Fix: Fortschritt, richtiger Dateiname
+```
+
+Danach Zielordner und `.part`-Dateien löschen; einen hängenden Starter samt yt-dlp mit
+`taskkill /PID <id> /T /F` beenden.
+
+## Fallen
+
+- **`APPDATA` umbiegen** (eigener Datenordner für die Terminal-Variante) lässt yt-dlp das
+  Firefox-Profil nicht mehr finden (`%APPDATA%\Mozilla`) → „keine Cookies gefunden“. Für
+  Cookie-Tests den Wegwerf-Starter nehmen, für „Werkzeuge fehlen“ den umgebogenen Ordner.
+- Die Terminal-Variante mit Adresse lädt in den Zielordner aus der **echten** `settings.json` –
+  nicht zum Testen.
+- Ein heruntergeladenes Programm (Deno) nur mit Zustimmung des Nutzers starten; der Netz-Test
+  `holt_deno_und_prueft_es` tut genau das.
+
+## Bekannte Fehlerbilder
+
+| Meldung | Ursache | Stelle |
+| --- | --- | --- |
+| `Unable to download video: [Errno 22] Invalid argument`, ohne Fortschritt | Pipe zu: Leser hörte bei ungültigem UTF-8 auf (cp1252) | `queue::read_lines`, `--encoding utf-8` |
+| `Sign in to confirm your age` | keine Cookies | `auth::CookieBrowser`, Auswahl „Anmeldung“ |
+| `Sorry, this content is age-restricted` trotz Cookies | keine JavaScript-Laufzeit, sonst Konto nicht altersbestätigt | `core::deno` |
+| `could not find firefox cookies database` | falsches/umgebogenes Profil, Browser nie benutzt | `auth::explain_error` |
+| `Failed to decrypt with DPAPI` | Chrome/Edge unter Windows | Firefox nehmen |
+
+Ein neues Fehlerbild: in `auth::explain_error` aufnehmen (Test mit der echten Zeile) und hier
+eintragen.

@@ -23,7 +23,13 @@ Tests mit Netzzugang: `cargo test --workspace -- --ignored`
 Fremde Fehler mit `yt-dlp -v` nachstellen, mit den Werkzeugen der App aus
 `<App-Daten>/bin` (z. B. `--cookies-from-browser firefox --js-runtimes
 deno:<bin>/deno.exe --simulate -- <adresse>`): Die Zeile `JS runtimes:` zeigt,
-ob eine Laufzeit gefunden wurde.
+ob eine Laufzeit gefunden wurde. Der ganze Ablauf (Rohbytes der Pipe, Download
+über den Kern per Wegwerf-Starter, Gegenprobe, bekannte Fehlerbilder) steht im
+Skill `.claude/skills/fehler-nachstellen/`.
+
+Wiederkehrende Abläufe als Projekt-Skills in `.claude/skills/`
+(`fehler-nachstellen`). Jede Änderung zieht sie mit: neue Fehlerbilder, Muster,
+Lehren.
 
 Die CI (`.github/workflows/ci.yml`) nimmt das jeweils neueste stabile Rust: Ein
 neues rustfmt kann alte Stellen anders umbrechen und `cargo fmt --check` rot

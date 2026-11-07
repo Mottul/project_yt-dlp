@@ -11,8 +11,8 @@ genau eine je System:
 | Windows 10/11 (x64) | die `…-setup.exe` |
 | macOS 11.3+ (Intel und Apple Silicon) | die `…universal.dmg` |
 
-**Vorab nichts installieren.** yt-dlp und ffmpeg holt die App beim ersten Start
-selbst — weder Python noch eines der beiden Programme muss von Hand eingerichtet
+**Vorab nichts installieren.** yt-dlp, ffmpeg und Deno holt die App beim ersten
+Start selbst — weder Python noch eines der Programme muss von Hand eingerichtet
 werden.
 
 ---
@@ -99,14 +99,15 @@ Die App richtet sich selbst ein und lädt dafür:
 | --- | --- | --- | --- |
 | yt-dlp | ~18 MB | ~37 MB | ~37 MB |
 | ffmpeg + ffprobe | ~59 MB | ~38 MB | ~51 MB |
+| Deno (JavaScript-Laufzeit für YouTube) | ~43 MB | ~39 MB | ~43 MB |
 
-Beides wird vor dem Ablegen gegen eine SHA-256-Prüfsumme geprüft. Ohne Internet
+Alles wird vor dem Ablegen gegen eine SHA-256-Prüfsumme geprüft. Ohne Internet
 startet die App normal — der Hinweis steht dann oben im Fenster, und der Knopf
 **Jetzt einrichten** wiederholt den Versuch.
 
 Danach wird bei jedem Start nur noch geprüft, ob eine neue **yt-dlp**-Version
 vorliegt (wenige Kilobyte). Das lässt sich unten im Fenster abschalten.
-ffmpeg bleibt, wie es ist.
+ffmpeg und Deno bleiben, wie sie sind.
 
 Hinter Firewall oder Proxy müssen `github.com` und
 `objects.githubusercontent.com` erreichbar sein.
@@ -117,6 +118,19 @@ Hinter Firewall oder Proxy müssen `github.com` und
 2. Adresse einfügen, Format und höchste Auflösung wählen, **Laden**.
 3. Zwei Downloads laufen gleichzeitig, der Rest wartet. Fertige Dateien lassen
    sich über **Im Ordner zeigen** öffnen.
+
+### Altersbeschränkte Videos
+
+Meldet YouTube „Sign in to confirm your age“, braucht yt-dlp eine Anmeldung:
+
+1. In einem Browser bei YouTube anmelden (volljähriges Konto).
+2. Unter **Anmeldung** diesen Browser wählen. yt-dlp liest dessen Cookies bei
+   jedem Download selbst; die App speichert sie nicht.
+3. Unter Windows **Firefox** nehmen: Chrome und Edge verschlüsseln ihre Cookies
+   so, dass andere Programme sie nicht lesen können.
+
+Kommt trotzdem „age-restricted“, verlangt YouTube für dieses Konto eine
+Altersbestätigung: im Google-Konto das Alter bestätigen und erneut versuchen.
 
 ## Aktualisieren
 

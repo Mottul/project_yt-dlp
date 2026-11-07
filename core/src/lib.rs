@@ -2,12 +2,15 @@
 //! Downloads aus. Kennt weder Fenster noch Terminal -- die Oberflaechen setzen
 //! darauf auf und bekommen Aenderungen ueber [`queue::JobSink`] gemeldet.
 
+pub mod auth;
+pub mod deno;
 pub mod ffmpeg;
 pub mod paths;
 pub mod queue;
 pub mod tools;
 pub mod ytdlp;
 
+pub use auth::CookieBrowser;
 pub use queue::{EnqueueRequest, Format, Job, JobSink, JobStatus, Manager};
 pub use tools::{ToolError, ToolResult};
 
@@ -25,6 +28,9 @@ pub struct ToolsStatus {
     pub ytdlp_up_to_date: Option<bool>,
     pub ffmpeg_version: Option<String>,
     pub ffmpeg_ready: bool,
+    /// JavaScript-Laufzeit fuer YouTubes Pruefaufgaben (siehe [`deno`]).
+    /// None = fehlt oder startet hier nicht; Downloads laufen trotzdem.
+    pub deno_version: Option<String>,
     /// Pruefung oder Download laeuft gerade.
     pub busy: bool,
     /// Was zuletzt schiefging (z. B. kein Netz), sonst None.
@@ -42,6 +48,14 @@ pub fn read_status(bin_dir: &Path, latest: Option<String>) -> ToolsStatus {
         .map(|l| l.kind().to_string());
     let ffmpeg_version = ffmpeg::installed_version(bin_dir);
     let ffmpeg_ready = ffmpeg_version.is_some();
+    let mut pending_mb = 0;
+    if !ffmpeg_ready {
+        pending_mb += ffmpeg::download_size_mb();
+    }
+    // Liegt Deno da, startet aber nicht (altes System), wird nichts mehr geladen.
+    if !deno::deno_path(bin_dir).exists() {
+        pending_mb += deno::download_size_mb();
+    }
     ToolsStatus {
         ytdlp_up_to_date: match (&ytdlp_version, &latest) {
             (Some(v), Some(l)) => Some(v == l),
@@ -52,13 +66,10 @@ pub fn read_status(bin_dir: &Path, latest: Option<String>) -> ToolsStatus {
         ytdlp_mode,
         ffmpeg_version,
         ffmpeg_ready,
+        deno_version: deno::installed_version(bin_dir),
         busy: false,
         last_error: None,
-        pending_mb: if ffmpeg_ready {
-            0
-        } else {
-            ffmpeg::download_size_mb()
-        },
+        pending_mb,
     }
 }
 
@@ -88,7 +99,9 @@ async fn install_ytdlp(bin_dir: &Path, tag: &str) -> Result<(), String> {
         return Err(ytdlp::NO_PYTHON_HINT.to_string());
     }
 
-    ytdlp::install(bin_dir, tag).await.map_err(|e| e.to_string())?;
+    ytdlp::install(bin_dir, tag)
+        .await
+        .map_err(|e| e.to_string())?;
     if ytdlp::Launcher::Native(native.clone()).version().is_some() {
         return Ok(());
     }
@@ -107,6 +120,14 @@ async fn install_ytdlp(bin_dir: &Path, tag: &str) -> Result<(), String> {
     }
     std::fs::remove_file(&native).ok();
     Ok(())
+}
+
+/// Haengt eine Meldung an die bisherigen an.
+fn add_error(error: &mut Option<String>, message: String) {
+    *error = Some(match error.take() {
+        Some(prev) => format!("{prev}; {message}"),
+        None => message,
+    });
 }
 
 /// Prueft auf eine neue yt-dlp-Version und laedt fehlende Werkzeuge nach.
@@ -134,11 +155,10 @@ pub async fn ensure_tools(bin_dir: &Path, downloads_running: bool) -> ToolsStatu
     }
 
     if let Err(err) = ffmpeg::ensure(bin_dir).await {
-        let message = format!("ffmpeg: {err}");
-        error = Some(match error {
-            Some(prev) => format!("{prev}; {message}"),
-            None => message,
-        });
+        add_error(&mut error, format!("ffmpeg: {err}"));
+    }
+    if let Err(err) = deno::ensure(bin_dir).await {
+        add_error(&mut error, format!("JavaScript-Laufzeit (Deno): {err}"));
     }
 
     let mut status = read_status(bin_dir, latest);

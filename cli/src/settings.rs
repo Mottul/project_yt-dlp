@@ -3,16 +3,21 @@
 
 use std::path::{Path, PathBuf};
 
-use mottul_video_core::{paths, Format};
+use mottul_video_core::{paths, CookieBrowser, Format};
 use serde::{Deserialize, Serialize};
 
+/// Fehlende Felder (Datei aus einer aelteren Fassung) bekommen die Vorgabe,
+/// statt dass die ganze Datei verworfen wird.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub output_dir: String,
     pub format: Format,
     pub max_height: Option<u32>,
     pub auto_update: bool,
+    /// Anmeldung: Cookies aus diesem Browser, None = ohne.
+    #[serde(deserialize_with = "mottul_video_core::auth::lenient_browser")]
+    pub cookies: Option<CookieBrowser>,
 }
 
 impl Default for Settings {
@@ -22,6 +27,7 @@ impl Default for Settings {
             format: Format::Video,
             max_height: Some(1080),
             auto_update: true,
+            cookies: None,
         }
     }
 }
@@ -57,6 +63,11 @@ impl Settings {
             Format::AudioMp3 => "Nur Ton MP3",
             Format::AudioM4a => "Nur Ton M4A",
         }
+    }
+
+    /// Gewaehlte Anmeldung fuer die Anzeige.
+    pub fn cookies_label(&self) -> &'static str {
+        self.cookies.map_or("keine", CookieBrowser::label)
     }
 
     /// Kurzfassung fuer die Kopfzeile.
@@ -101,6 +112,32 @@ mod tests {
         assert!(!loaded.output_dir.is_empty());
         assert_eq!(loaded.max_height, Some(720));
         assert!(!loaded.auto_update);
+        // Datei aus 0.1.1 ohne Anmeldung: Rest bleibt, Anmeldung aus
+        assert_eq!(loaded.cookies, None);
+        assert_eq!(loaded.cookies_label(), "keine");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn anmeldung_bleibt_gespeichert() {
+        let dir = std::env::temp_dir().join(format!("mvl-ck-{}", std::process::id()));
+        let mut s = Settings {
+            cookies: Some(CookieBrowser::Firefox),
+            ..Settings::default()
+        };
+        s.save(&dir);
+        let loaded = Settings::load(&dir);
+        assert_eq!(loaded.cookies, Some(CookieBrowser::Firefox));
+        assert_eq!(loaded.cookies_label(), "Firefox");
+        // Ein unbekannter Name verwirft nicht die ganze Datei
+        s.cookies = None;
+        s.max_height = Some(480);
+        let raw = serde_json::to_string(&s).unwrap();
+        let raw = raw.replace("\"cookies\":null", "\"cookies\":\"netscape\"");
+        std::fs::write(Settings::file(&dir), raw).unwrap();
+        let loaded = Settings::load(&dir);
+        assert_eq!(loaded.cookies, None);
+        assert_eq!(loaded.max_height, Some(480));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

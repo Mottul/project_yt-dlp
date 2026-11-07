@@ -105,6 +105,106 @@ pub fn gunzip(bytes: &[u8]) -> ToolResult<Vec<u8>> {
     Ok(out)
 }
 
+/// Vergleicht die SHA-256 der Daten mit der erwarteten.
+pub fn check_sha256(data: &[u8], expected: &str) -> ToolResult<()> {
+    let actual = sha256_hex(data);
+    if actual.eq_ignore_ascii_case(expected) {
+        return Ok(());
+    }
+    Err(ToolError::Checksum {
+        expected: expected.chars().take(12).collect(),
+        actual: actual.chars().take(12).collect(),
+    })
+}
+
+/// Groesser ist keine der Dateien, die hier entpackt werden (Deno: rund 100 MB).
+const MAX_UNZIPPED: usize = 512 * 1024 * 1024;
+
+fn le16(b: &[u8], at: usize) -> Option<usize> {
+    let s = b.get(at..at.checked_add(2)?)?;
+    Some(u16::from_le_bytes([s[0], s[1]]) as usize)
+}
+
+fn le32(b: &[u8], at: usize) -> Option<usize> {
+    let s = b.get(at..at.checked_add(4)?)?;
+    Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize)
+}
+
+/// Holt eine Datei aus einem ZIP-Archiv (Deno gibt es nur so).
+///
+/// Bewusst schmal: Eintraege ungepackt oder Deflate, ohne ZIP64 und ohne
+/// Verschluesselung -- mehr liefern die festgenagelten Archive nicht, alles
+/// andere wird abgelehnt statt halb gelesen. Groessen und Lage kommen aus dem
+/// Inhaltsverzeichnis am Ende: im Kopf vor den Daten duerfen sie fehlen.
+pub fn unzip_entry(zip: &[u8], name: &str) -> ToolResult<Vec<u8>> {
+    let bad = |what: &str| ToolError::Other(format!("ZIP-Archiv fehlerhaft: {what}"));
+    let u16_at = |at: usize| le16(zip, at).ok_or_else(|| bad("zu kurz"));
+    let u32_at = |at: usize| le32(zip, at).ok_or_else(|| bad("zu kurz"));
+
+    // Ende des Inhaltsverzeichnisses: 22 Bytes, dahinter hoechstens ein
+    // Kommentar von bis zu 64 KiB.
+    let last = zip.len().checked_sub(22).ok_or_else(|| bad("zu kurz"))?;
+    let eocd = (last.saturating_sub(0xFFFF)..=last)
+        .rev()
+        .find(|&p| le32(zip, p) == Some(0x0605_4b50))
+        .ok_or_else(|| bad("kein Inhaltsverzeichnis"))?;
+    let count = u16_at(eocd + 10)?;
+    let mut pos = u32_at(eocd + 16)?;
+
+    for _ in 0..count {
+        if le32(zip, pos) != Some(0x0201_4b50) {
+            return Err(bad("Inhaltsverzeichnis"));
+        }
+        let flags = u16_at(pos + 8)?;
+        let method = u16_at(pos + 10)?;
+        let crc = u32_at(pos + 16)?;
+        let packed = u32_at(pos + 20)?;
+        let size = u32_at(pos + 24)?;
+        let name_len = u16_at(pos + 28)?;
+        let extra_len = u16_at(pos + 30)?;
+        let comment_len = u16_at(pos + 32)?;
+        let local = u32_at(pos + 42)?;
+        let entry_name = zip.get(pos + 46..pos + 46 + name_len);
+        pos += 46 + name_len + extra_len + comment_len;
+        if entry_name != Some(name.as_bytes()) {
+            continue;
+        }
+
+        if flags & 1 != 0 {
+            return Err(bad("verschlüsselt"));
+        }
+        if [packed, size, local].contains(&0xFFFF_FFFF) {
+            return Err(bad("ZIP64 wird nicht unterstützt"));
+        }
+        if size > MAX_UNZIPPED || le32(zip, local) != Some(0x0403_4b50) {
+            return Err(bad("Eintrag"));
+        }
+        let start = local + 30 + u16_at(local + 26)? + u16_at(local + 28)?;
+        let raw = zip
+            .get(start..start + packed)
+            .ok_or_else(|| bad("abgeschnitten"))?;
+
+        let mut out = Vec::with_capacity(size);
+        match method {
+            0 => out.extend_from_slice(raw),
+            8 => {
+                flate2::read::DeflateDecoder::new(raw)
+                    .take(size as u64 + 1)
+                    .read_to_end(&mut out)
+                    .map_err(|e| bad(&format!("Deflate: {e}")))?;
+            }
+            other => return Err(bad(&format!("Packverfahren {other}"))),
+        }
+        let mut sum = flate2::Crc::new();
+        sum.update(&out);
+        if out.len() != size || sum.sum() as usize != crc {
+            return Err(bad("Prüfsumme des Eintrags"));
+        }
+        return Ok(out);
+    }
+    Err(ToolError::Other(format!("{name} fehlt im ZIP-Archiv")))
+}
+
 /// Schreibt Daten ausfuehrbar an ihren Platz -- erst daneben, dann umbenennen.
 pub fn place_executable(dest: &Path, data: &[u8]) -> ToolResult<()> {
     if let Some(dir) = dest.parent() {
@@ -137,13 +237,7 @@ pub async fn download_verified(
 ) -> ToolResult<()> {
     let raw = fetch_bytes(url, timeout).await?;
     let data = if gzipped { gunzip(&raw)? } else { raw };
-    let actual = sha256_hex(&data);
-    if !actual.eq_ignore_ascii_case(expected) {
-        return Err(ToolError::Checksum {
-            expected: expected.chars().take(12).collect(),
-            actual: actual.chars().take(12).collect(),
-        });
-    }
+    check_sha256(&data, expected)?;
     place_executable(dest, &data)
 }
 
@@ -224,6 +318,65 @@ mod tests {
     #[test]
     fn gunzip_meldet_kaputte_daten() {
         assert!(gunzip(b"kein gzip").is_err());
+    }
+
+    #[test]
+    fn pruefsumme_vergleichen() {
+        let leer = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(check_sha256(b"", leer).is_ok());
+        assert!(check_sha256(b"", &leer.to_ascii_uppercase()).is_ok());
+        let err = check_sha256(b"x", leer).unwrap_err();
+        assert!(matches!(err, ToolError::Checksum { .. }));
+    }
+
+    /// Mit Pythons zipfile gebaut (Deflate, zwei Eintraege) -- ein echtes
+    /// Archiv, nicht eines aus dem eigenen Gegenstueck des Lesers.
+    const ECHTES_ZIP: [u8; 249] = [
+        0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0xae, 0x76, 0x67, 0x5d, 0x7b,
+        0xed, 0x63, 0xfd, 0x12, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00,
+        0x4c, 0x49, 0x45, 0x53, 0x4d, 0x49, 0x43, 0x48, 0x2e, 0x74, 0x78, 0x74, 0xcb, 0x2b, 0x2d,
+        0x52, 0x48, 0xcd, 0xcc, 0x53, 0x70, 0x4a, 0xcd, 0x2c, 0x2e, 0xc8, 0x4c, 0xcd, 0x01, 0x00,
+        0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0xae, 0x76, 0x67, 0x5d, 0xb6,
+        0x9b, 0x96, 0x8c, 0x11, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,
+        0x64, 0x65, 0x6e, 0x6f, 0x2e, 0x65, 0x78, 0x65, 0xf3, 0x48, 0xcc, 0xc9, 0xc9, 0x57, 0x70,
+        0x49, 0xcd, 0xcb, 0x57, 0x54, 0xf0, 0xa0, 0x01, 0x1b, 0x00, 0x50, 0x4b, 0x01, 0x02, 0x14,
+        0x00, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0xae, 0x76, 0x67, 0x5d, 0x7b, 0xed, 0x63, 0xfd,
+        0x12, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x49, 0x45, 0x53,
+        0x4d, 0x49, 0x43, 0x48, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00, 0x14,
+        0x00, 0x00, 0x00, 0x08, 0x00, 0xae, 0x76, 0x67, 0x5d, 0xb6, 0x9b, 0x96, 0x8c, 0x11, 0x00,
+        0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x80, 0x01, 0x3c, 0x00, 0x00, 0x00, 0x64, 0x65, 0x6e, 0x6f, 0x2e, 0x65,
+        0x78, 0x65, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x70,
+        0x00, 0x00, 0x00, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn zip_eintrag_entpacken() {
+        let data = unzip_entry(&ECHTES_ZIP, "deno.exe").unwrap();
+        assert_eq!(data, "Hallo Deno! ".repeat(8).as_bytes());
+        assert_eq!(
+            unzip_entry(&ECHTES_ZIP, "LIESMICH.txt").unwrap(),
+            b"nur ein Beispiel"
+        );
+    }
+
+    #[test]
+    fn zip_ohne_den_eintrag() {
+        let err = unzip_entry(&ECHTES_ZIP, "deno").unwrap_err();
+        assert!(err.to_string().contains("fehlt"), "{err}");
+    }
+
+    #[test]
+    fn zip_kaputt_wird_abgelehnt() {
+        // Ein Byte in den gepackten Daten von deno.exe verfaelscht
+        let mut kaputt = ECHTES_ZIP;
+        kaputt[110] ^= 0x55;
+        assert!(unzip_entry(&kaputt, "deno.exe").is_err());
+        // Abgeschnitten: kein Inhaltsverzeichnis mehr
+        assert!(unzip_entry(&ECHTES_ZIP[..200], "deno.exe").is_err());
+        assert!(unzip_entry(b"", "deno.exe").is_err());
+        assert!(unzip_entry(&[b'x'; 64], "deno.exe").is_err());
     }
 
     #[test]

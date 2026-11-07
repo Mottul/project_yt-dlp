@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { api, type Format, type Job, type Settings, type ToolsStatus } from './api'
+import { api, type CookieBrowser, type Format, type Job, type Settings, type ToolsStatus } from './api'
 
 const RESOLUTIONS: Array<{ value: number | null; label: string }> = [
   { value: null, label: 'Beste' },
@@ -11,6 +11,26 @@ const RESOLUTIONS: Array<{ value: number | null; label: string }> = [
   { value: 720, label: '720p' },
   { value: 480, label: '480p' }
 ]
+
+/** Safari liest yt-dlp nur auf dem Mac */
+const IS_MAC = navigator.userAgent.includes('Mac')
+
+const COOKIE_BROWSERS: Array<{ value: CookieBrowser; label: string }> = [
+  { value: 'firefox', label: 'Firefox' },
+  { value: 'chrome', label: 'Chrome' },
+  { value: 'edge', label: 'Edge' },
+  { value: 'brave', label: 'Brave' },
+  { value: 'opera', label: 'Opera' },
+  { value: 'vivaldi', label: 'Vivaldi' },
+  { value: 'chromium', label: 'Chromium' },
+  ...(IS_MAC ? [{ value: 'safari' as const, label: 'Safari' }] : [])
+]
+
+const COOKIE_HINT =
+  'Für altersbeschränkte oder nur angemeldet sichtbare Videos: yt-dlp nimmt die Anmeldung ' +
+  'des Browsers (dort bei der Seite angemeldet sein). Die Cookies liest yt-dlp bei jedem ' +
+  'Abruf selbst – der MottulVideoLoader speichert sie nicht. Unter Windows sperren Chrome ' +
+  'und Edge ihre Cookies für andere Programme: dort Firefox wählen.'
 
 const STATUS_LABEL: Record<Job['status'], string> = {
   queued: 'wartet',
@@ -73,7 +93,8 @@ export function App(): JSX.Element {
         url: trimmed,
         format: settings.format,
         maxHeight: settings.format === 'video' ? settings.maxHeight : null,
-        outputDir: settings.outputDir
+        outputDir: settings.outputDir,
+        cookies: settings.cookies ?? null
       })
       setUrl('')
       setMessage(null)
@@ -101,7 +122,7 @@ export function App(): JSX.Element {
               <span className="dot spin" aria-hidden="true" />
               <span>
                 {status?.ytdlpVersion ? 'Prüfe auf neue Version…' : 'Richte Werkzeuge ein…'}
-                {!status?.ffmpegReady && status?.pendingMb ? ` (ffmpeg, ca. ${status.pendingMb} MB)` : ''}
+                {status?.pendingMb ? ` (ca. ${status.pendingMb} MB)` : ''}
               </span>
             </>
           ) : toolsReady ? (
@@ -115,13 +136,15 @@ export function App(): JSX.Element {
                 )}
                 {' · ffmpeg '}
                 <code>{status?.ffmpegVersion ?? '—'}</code>
+                {' · Deno '}
+                <code>{status?.denoVersion ?? 'fehlt'}</code>
               </span>
             </>
           ) : (
             <>
               <span className="dot warn" aria-hidden="true" />
               <span>
-                Werkzeuge fehlen — beim ersten Start werden yt-dlp und ffmpeg geladen
+                Werkzeuge fehlen — beim ersten Start werden yt-dlp, ffmpeg und Deno geladen
                 {status?.pendingMb ? ` (ca. ${status.pendingMb} MB)` : ''}.
               </span>
             </>
@@ -180,6 +203,25 @@ export function App(): JSX.Element {
               </select>
             </label>
           )}
+
+          <label title={COOKIE_HINT}>
+            <span>Anmeldung</span>
+            <select
+              value={settings?.cookies ?? 'none'}
+              onChange={(e) =>
+                update({
+                  cookies: e.target.value === 'none' ? null : (e.target.value as CookieBrowser)
+                })
+              }
+            >
+              <option value="none">Keine</option>
+              {COOKIE_BROWSERS.map((b) => (
+                <option key={b.value} value={b.value}>
+                  Cookies aus {b.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className="grow">
             <span>Zielordner</span>

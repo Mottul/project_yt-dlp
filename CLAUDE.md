@@ -63,6 +63,12 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
   Fehlerzeile, deshalb das ganze Ende von stderr prüfen.
 - **Adresse immer nach `--`** (`queue::build_args`): eine Eingabe, die mit „-“
   beginnt, darf nie als Option gelten.
+- **Ausgabe von yt-dlp** immer mit `--encoding utf-8` und über
+  `queue::read_lines` lesen (Bytes, ungültiges UTF-8 ersetzt, liest bis zum
+  Ende). `lines()` endet bei der ersten ungültigen Zeile; dann ist die Pipe zu,
+  und yt-dlp scheitert unter Windows mit „Unable to download video: [Errno 22]
+  Invalid argument“ – ohne `--encoding` schreibt es in cp1252 (ARTE-Titel mit
+  geschütztem Leerzeichen, 7.11.2026).
 - **Einstellungen** (`Settings` in `src-tauri` und `cli`, eine gemeinsame Datei)
   tragen `#[serde(default)]` am Struct: Ein neues Feld darf eine ältere Datei nie
   verwerfen (sonst ist der Zielordner weg). Neue Felder in BEIDEN Structs

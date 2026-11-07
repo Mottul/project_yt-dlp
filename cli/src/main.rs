@@ -85,7 +85,11 @@ fn main() {
     println!("  {}", paint(BOLD, "MottulVideoLoader"));
 
     // Werkzeuge einrichten bzw. prüfen. Ohne Netz geht es mit dem weiter, was da ist.
-    let status = if config.auto_update || core::ytdlp::installed_version(&bin_dir).is_none() {
+    // Fehlt eines, auch ohne Startprüfung: Es gibt hier keinen Knopf dafür, und
+    // Deno kam erst nach 0.1.1 dazu.
+    let missing = core::ytdlp::installed_version(&bin_dir).is_none()
+        || !core::deno::deno_path(&bin_dir).exists();
+    let status = if config.auto_update || missing {
         println!("  {}", paint(DIM, "Prüfe Werkzeuge…"));
         runtime.block_on(core::ensure_tools(&bin_dir, false))
     } else {

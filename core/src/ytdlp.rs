@@ -461,7 +461,10 @@ d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592  yt-dlp_macos";
         match resolve_launcher(&dir) {
             Some(Launcher::Python { script, .. }) => assert_eq!(script, zipapp_path(&dir)),
             // Ohne Python 3 auf dem Rechner bleibt nur None -- auch richtig.
-            None => assert!(find_python().is_none(), "Python vorhanden, aber nicht gewählt"),
+            None => assert!(
+                find_python().is_none(),
+                "Python vorhanden, aber nicht gewählt"
+            ),
             other => panic!("unerwartet: {other:?}"),
         }
 
@@ -495,12 +498,18 @@ d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592  yt-dlp_macos";
             panic!("für diesen Test wird Python 3.9+ gebraucht");
         };
         let dir = std::env::temp_dir().join(format!("mvl-pyz-{}", uuid::Uuid::new_v4().simple()));
-        install_zipapp(&dir, TAG).await.expect("Download und Prüfung");
+        install_zipapp(&dir, TAG)
+            .await
+            .expect("Download und Prüfung");
         let launcher = Launcher::Python {
             python,
             script: zipapp_path(&dir),
         };
-        assert_eq!(launcher.version().as_deref(), Some(TAG), "gestartete Version");
+        assert_eq!(
+            launcher.version().as_deref(),
+            Some(TAG),
+            "gestartete Version"
+        );
         assert_eq!(
             resolve_launcher(&dir),
             Some(launcher),

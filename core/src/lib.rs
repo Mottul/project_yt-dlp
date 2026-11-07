@@ -99,7 +99,9 @@ async fn install_ytdlp(bin_dir: &Path, tag: &str) -> Result<(), String> {
         return Err(ytdlp::NO_PYTHON_HINT.to_string());
     }
 
-    ytdlp::install(bin_dir, tag).await.map_err(|e| e.to_string())?;
+    ytdlp::install(bin_dir, tag)
+        .await
+        .map_err(|e| e.to_string())?;
     if ytdlp::Launcher::Native(native.clone()).version().is_some() {
         return Ok(());
     }

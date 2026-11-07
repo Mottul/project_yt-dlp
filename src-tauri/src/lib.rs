@@ -24,14 +24,19 @@ impl JobSink for WindowSink {
 }
 
 /// Vom Benutzer gewaehlte Einstellungen; liegen als JSON bei den App-Daten.
+/// Fehlende Felder (Datei aus einer aelteren Fassung) bekommen die Vorgabe,
+/// statt dass die ganze Datei verworfen wird.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub output_dir: String,
     pub format: core::Format,
     pub max_height: Option<u32>,
     /// yt-dlp beim Start pruefen und bei Bedarf aktualisieren.
     pub auto_update: bool,
+    /// Anmeldung: Cookies aus diesem Browser, None = ohne.
+    #[serde(deserialize_with = "mottul_video_core::auth::lenient_browser")]
+    pub cookies: Option<core::CookieBrowser>,
 }
 
 impl Default for Settings {
@@ -41,6 +46,7 @@ impl Default for Settings {
             format: core::Format::Video,
             max_height: Some(1080),
             auto_update: true,
+            cookies: None,
         }
     }
 }

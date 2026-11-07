@@ -9,7 +9,7 @@ mod ui;
 
 use std::sync::{Arc, Condvar, Mutex};
 
-use core::{paths, EnqueueRequest, Format, Job, JobSink, JobStatus, Manager};
+use core::{paths, CookieBrowser, EnqueueRequest, Format, Job, JobSink, JobStatus, Manager};
 use mottul_video_core as core;
 use settings::Settings;
 use ui::{paint, BOLD, DIM, GOLD, GREEN, RED};
@@ -131,10 +131,14 @@ fn main() {
             paint(DIM, &format!("Ziel:   {}", config.output_dir))
         );
         println!("  {}", paint(DIM, &format!("Format: {}", config.summary())));
+        println!(
+            "  {}",
+            paint(DIM, &format!("Anmeldung: {}", config.cookies_label()))
+        );
         println!();
         println!(
             "  {}",
-            paint(DIM, "Adresse einfügen + Enter    [f] Format   [a] Auflösung   [o] Ordner   [Enter] Ende")
+            paint(DIM, "Adresse einfügen + Enter    [f] Format   [a] Auflösung   [o] Ordner   [n] Anmeldung   [Enter] Ende")
         );
 
         let line = match prompt("› ") {
@@ -148,6 +152,7 @@ fn main() {
             "f" | "F" => choose_format(&mut config, &data_dir),
             "a" | "A" => choose_height(&mut config, &data_dir),
             "o" | "O" => choose_folder(&mut config, &data_dir),
+            "n" | "N" => choose_cookies(&mut config, &data_dir),
             _ => {
                 let urls: Vec<String> = trimmed.split_whitespace().map(str::to_string).collect();
                 run_jobs(&manager, &screen, &bin_dir, &config, &urls);
@@ -168,6 +173,10 @@ fn print_status(status: &core::ToolsStatus) {
         .ffmpeg_version
         .clone()
         .unwrap_or_else(|| "fehlt".into());
+    let deno = status
+        .deno_version
+        .clone()
+        .unwrap_or_else(|| "fehlt".into());
     let mark = if status.ytdlp_up_to_date == Some(false) {
         "veraltet"
     } else {
@@ -183,7 +192,7 @@ fn print_status(status: &core::ToolsStatus) {
         "  {}",
         paint(
             DIM,
-            &format!("yt-dlp {ytdlp}{mode} · ffmpeg {ffmpeg} · {mark}")
+            &format!("yt-dlp {ytdlp}{mode} · ffmpeg {ffmpeg} · Deno {deno} · {mark}")
         )
     );
     // Wenn yt-dlp gar nicht da ist, steht der Grund gleich im Abbruchtext --
@@ -213,6 +222,7 @@ fn run_jobs(
                     None
                 },
                 output_dir: config.output_dir.clone(),
+                cookies: config.cookies,
             },
             bin_dir.to_path_buf(),
         );
@@ -338,6 +348,26 @@ fn choose_height(config: &mut Settings, data_dir: &std::path::Path) {
         println!(
             "  {}",
             paint(GREEN, &format!("✓ Auflösung: {}", options[choice]))
+        );
+    }
+}
+
+/// Cookies aus dem Browser fuer altersbeschraenkte oder nur angemeldet
+/// sichtbare Videos -- yt-dlp liest sie bei jedem Abruf selbst.
+fn choose_cookies(config: &mut Settings, data_dir: &std::path::Path) {
+    let browsers = CookieBrowser::available();
+    let mut options = vec!["Keine (ohne Anmeldung)"];
+    options.extend(browsers.iter().map(|b| b.label()));
+    let current = match config.cookies {
+        Some(b) => browsers.iter().position(|x| *x == b).map_or(0, |i| i + 1),
+        None => 0,
+    };
+    if let Some(choice) = choose("Anmeldung (Cookies aus dem Browser)", &options, current) {
+        config.cookies = choice.checked_sub(1).map(|i| browsers[i]);
+        config.save(data_dir);
+        println!(
+            "  {}",
+            paint(GREEN, &format!("✓ Anmeldung: {}", config.cookies_label()))
         );
     }
 }

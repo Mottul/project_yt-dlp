@@ -2,8 +2,8 @@
 
 Schlanke Desktop-App für [yt-dlp](https://github.com/yt-dlp/yt-dlp): Adresse
 einfügen, Format wählen, laden. Gebaut mit [Tauri](https://tauri.app) — die
-Anwendung selbst wiegt rund 10 MB, yt-dlp und ffmpeg holt sie sich beim ersten
-Start selbst.
+Anwendung selbst wiegt rund 10 MB, yt-dlp, ffmpeg und Deno holt sie sich beim
+ersten Start selbst.
 
 Für Anwender: [`docs/INSTALL.md`](docs/INSTALL.md) beschreibt Installation und
 ersten Start unter Windows und macOS.
@@ -16,6 +16,17 @@ ersten Start unter Windows und macOS.
 - **yt-dlp bleibt aktuell:** beim Start wird die neueste stabile Version
   ermittelt und bei Abweichung ersetzt (abschaltbar)
 - **ffmpeg** wird einmalig nachgeladen und danach nicht mehr angefasst
+- **Anmeldung** für altersbeschränkte oder nur angemeldet sichtbare Videos:
+  yt-dlp nimmt die Cookies eines Browsers (Firefox, Chrome, Edge, Brave, Opera,
+  Vivaldi, Chromium, Safari auf dem Mac). Die App liest und speichert sie nicht,
+  sie nennt yt-dlp nur den Browser. Unter Windows sperren Chrome und Edge ihre
+  Cookies für andere Programme — dort Firefox nehmen.
+- **JavaScript-Laufzeit (Deno):** YouTube stellt Prüfaufgaben, die yt-dlp seit
+  2025.11 nur in JavaScript löst. Ohne Laufzeit scheiterten altersbeschränkte
+  Videos trotz Cookies („age-restricted“), andere kamen nur in schlechter
+  Qualität. Deno wird wie ffmpeg einmalig nachgeladen.
+- Bekannte Fehler (Anmeldung nötig, altersbeschränkt, Cookies gesperrt,
+  Prüfaufgabe gescheitert) stehen auf Deutsch mit dem nächsten Schritt da
 
 ## Woher die Werkzeuge kommen
 
@@ -23,8 +34,9 @@ ersten Start unter Windows und macOS.
 | --- | --- | --- |
 | yt-dlp | offizielles Release, jeweils die neueste stabile Version | `SHA2-256SUMS` des Releases |
 | ffmpeg, ffprobe | `eugeneware/ffmpeg-static`, feste Version `b6.1.1` | SHA-256 im Programm hinterlegt |
+| Deno | `denoland/deno`, feste Version `v2.9.8` | SHA-256 des ZIP-Archivs im Programm hinterlegt |
 
-Beides landet unter `<App-Daten>/bin`. Was dort ausführbar abgelegt wird, wurde
+Alles landet unter `<App-Daten>/bin`. Was dort ausführbar abgelegt wird, wurde
 vorher gegen eine SHA-256-Prüfsumme geprüft; erst danach wird die Datei an ihren
 Platz umbenannt — ein Abbruch hinterlässt nie eine halbe, startbare Datei.
 
@@ -41,6 +53,12 @@ demselben Server liegt wie die Datei.
 Die Version anheben: `TAG` in `src-tauri/src/ffmpeg.rs` ändern und die
 Prüfsummen der **entpackten** Dateien eintragen
 (`curl -sL <asset>.gz | gunzip | sha256sum`).
+
+Deno ebenso fest genagelt: `TAG` in `core/src/deno.rs` anheben und die
+Prüfsummen aus den `<asset>.zip.sha256sum`-Dateien des Releases eintragen
+(Windows liefert sie im PowerShell-Format, der Hash steht unter `Hash`).
+Startet Deno auf einem Rechner nicht (zu altes System), bleibt die Datei liegen:
+yt-dlp meldet die Laufzeit dann als nicht verfügbar und lädt ohne sie.
 
 ## Entwicklung
 
@@ -67,6 +85,8 @@ core/src/             Kern — kennt weder Fenster noch Terminal
   tools.rs            Laden, Prüfsummen, atomares Ablegen
   ytdlp.rs            Version ermitteln und aktuell halten
   ffmpeg.rs           feste Version, hinterlegte Prüfsummen
+  deno.rs             JavaScript-Laufzeit für yt-dlp, feste Version
+  auth.rs             Anmeldung (Browser-Cookies), verständliche Fehler
   queue.rs            Warteschlange, Fortschritts-Auswertung
   paths.rs            Datenverzeichnis, Zielordner
 src/                  Fenster-Oberfläche (React + TypeScript, eigenes CSS)
@@ -99,7 +119,7 @@ cargo run -p mottul-video-cli -- <adresse> # direkt laden
 ```
 
 Bedienung: Adresse einfügen und Enter; `f` Format, `a` Auflösung, `o` Ordner,
-leere Eingabe beendet. Der Release enthält sie als
+`n` Anmeldung, leere Eingabe beendet. Der Release enthält sie als
 `MottulVideoLoader-Terminal-macos.zip` samt Doppelklick-Starter.
 
 ## Veröffentlichen

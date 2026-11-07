@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::oneshot;
 
+use crate::auth::{explain_error, CookieBrowser};
+
 /// Nimmt jede Aenderung an einem Auftrag entgegen. Wird aus Arbeitsfaeden
 /// aufgerufen, muss also selbst fuer Ordnung sorgen.
 pub trait JobSink: Send + Sync + 'static {
@@ -43,6 +45,9 @@ pub struct EnqueueRequest {
     /// Hoehenbegrenzung fuer Video, None = beste verfuegbare.
     pub max_height: Option<u32>,
     pub output_dir: String,
+    /// Anmeldung: Cookies aus diesem Browser, None = ohne.
+    #[serde(default)]
+    pub cookies: Option<CookieBrowser>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -138,8 +143,9 @@ pub fn title_from_path(path: &str) -> String {
     }
 }
 
-/// Baut die Aufrufparameter fuer yt-dlp.
-pub fn build_args(req: &EnqueueRequest, bin_dir: &Path) -> Vec<String> {
+/// Baut die Aufrufparameter fuer yt-dlp. `deno`: die eigene JavaScript-Laufzeit,
+/// wenn sie daliegt (siehe [`crate::deno`]).
+pub fn build_args(req: &EnqueueRequest, bin_dir: &Path, deno: Option<&Path>) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "--newline".into(),
         "--no-playlist".into(),
@@ -167,6 +173,11 @@ pub fn build_args(req: &EnqueueRequest, bin_dir: &Path) -> Vec<String> {
             });
         }
     }
+    if let Some(browser) = req.cookies {
+        args.push("--cookies-from-browser".into());
+        args.push(browser.id().into());
+    }
+    args.extend(crate::deno::runtime_args(deno));
     args.push("-o".into());
     args.push(
         Path::new(&req.output_dir)
@@ -174,6 +185,9 @@ pub fn build_args(req: &EnqueueRequest, bin_dir: &Path) -> Vec<String> {
             .to_string_lossy()
             .into_owned(),
     );
+    // Die Adresse nach `--`: Eine Eingabe, die mit „-“ beginnt, darf nie als
+    // Option gelesen werden.
+    args.push("--".into());
     args.push(req.url.clone());
     args
 }
@@ -317,9 +331,11 @@ impl Manager {
             return;
         };
 
+        let deno_file = crate::deno::deno_path(bin_dir);
+        let deno = deno_file.exists().then_some(deno_file.as_path());
         let mut cmd = tokio::process::Command::new(launcher.program());
         cmd.args(launcher.prefix())
-            .args(build_args(&req, bin_dir))
+            .args(build_args(&req, bin_dir, deno))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -417,7 +433,7 @@ impl Manager {
             }),
             Ok(code) => {
                 let tail = err_tail.lock().unwrap().clone();
-                let message = tail
+                let raw = tail
                     .iter()
                     .rev()
                     .find(|l| l.contains("ERROR"))
@@ -426,6 +442,8 @@ impl Manager {
                     .unwrap_or_else(|| {
                         format!("yt-dlp endete mit Code {}", code.code().unwrap_or(-1))
                     });
+                // Bekannte Fehler mit dem naechsten Schritt statt der englischen Zeile
+                let message = explain_error(&tail, req.cookies).unwrap_or(raw);
                 self.patch(id, |job| {
                     job.status = JobStatus::Error;
                     job.error = Some(message.clone());
@@ -605,12 +623,49 @@ mod tests {
             format,
             max_height,
             output_dir: "/ziel".into(),
+            cookies: None,
         }
     }
 
     #[test]
+    fn adresse_steht_hinter_doppelstrich() {
+        let mut r = req(Format::Video, None);
+        r.url = "-Qq1MLVwmfs".into();
+        let args = build_args(&r, Path::new("/bin"), None);
+        let n = args.len();
+        assert_eq!(args[n - 2..], ["--", "-Qq1MLVwmfs"]);
+    }
+
+    #[test]
+    fn anmeldung_und_laufzeit_vor_der_adresse() {
+        let mut r = req(Format::Video, None);
+        r.cookies = Some(CookieBrowser::Firefox);
+        let args = build_args(&r, Path::new("/bin"), Some(Path::new("/bin/deno")));
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert_eq!(args[at("--cookies-from-browser") + 1], "firefox");
+        assert_eq!(args[at("--js-runtimes") + 1], "deno:/bin/deno");
+        assert!(at("--cookies-from-browser") < at("--"));
+        assert!(at("--js-runtimes") < at("--"));
+
+        let ohne = build_args(&req(Format::Video, None), Path::new("/bin"), None);
+        let flags = |a: &String| a.starts_with("--cookies") || a == "--js-runtimes";
+        assert!(!ohne.iter().any(flags));
+    }
+
+    #[test]
+    fn anfrage_ohne_anmeldung_bleibt_gueltig() {
+        // So schickt sie eine Oberflaeche, die das Feld noch nicht kennt
+        let raw = r#"{"url":"u","format":"video","maxHeight":null,"outputDir":"/z"}"#;
+        let r: EnqueueRequest = serde_json::from_str(raw).unwrap();
+        assert_eq!(r.cookies, None);
+        let raw = r#"{"url":"u","format":"video","outputDir":"/z","cookies":"firefox"}"#;
+        let r: EnqueueRequest = serde_json::from_str(raw).unwrap();
+        assert_eq!(r.cookies, Some(CookieBrowser::Firefox));
+    }
+
+    #[test]
     fn video_mit_hoehenbegrenzung() {
-        let args = build_args(&req(Format::Video, Some(1080)), Path::new("/bin"));
+        let args = build_args(&req(Format::Video, Some(1080)), Path::new("/bin"), None);
         assert!(args.contains(&"--ffmpeg-location".to_string()));
         assert!(args.contains(&"/bin".to_string()));
         let idx = args.iter().position(|a| a == "-f").unwrap();
@@ -621,28 +676,28 @@ mod tests {
 
     #[test]
     fn video_ohne_begrenzung() {
-        let args = build_args(&req(Format::Video, None), Path::new("/bin"));
+        let args = build_args(&req(Format::Video, None), Path::new("/bin"), None);
         let idx = args.iter().position(|a| a == "-f").unwrap();
         assert_eq!(args[idx + 1], "bv*+ba/b");
     }
 
     #[test]
     fn audio_waehlt_das_format() {
-        let mp3 = build_args(&req(Format::AudioMp3, Some(720)), Path::new("/bin"));
+        let mp3 = build_args(&req(Format::AudioMp3, Some(720)), Path::new("/bin"), None);
         assert!(mp3.contains(&"-x".to_string()));
         let idx = mp3.iter().position(|a| a == "--audio-format").unwrap();
         assert_eq!(mp3[idx + 1], "mp3");
         // Die Hoehenbegrenzung ist bei Audio bedeutungslos und taucht nicht auf.
         assert!(!mp3.iter().any(|a| a.contains("height")));
 
-        let m4a = build_args(&req(Format::AudioM4a, None), Path::new("/bin"));
+        let m4a = build_args(&req(Format::AudioM4a, None), Path::new("/bin"), None);
         let idx = m4a.iter().position(|a| a == "--audio-format").unwrap();
         assert_eq!(m4a[idx + 1], "m4a");
     }
 
     #[test]
     fn zielmuster_liegt_im_zielordner() {
-        let args = build_args(&req(Format::Video, None), Path::new("/bin"));
+        let args = build_args(&req(Format::Video, None), Path::new("/bin"), None);
         let idx = args.iter().position(|a| a == "-o").unwrap();
         assert!(args[idx + 1].starts_with("/ziel"));
         assert!(args[idx + 1].ends_with("%(title)s.%(ext)s"));

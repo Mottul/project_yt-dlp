@@ -62,8 +62,8 @@ Die Fenster-App braucht macOS 11.3. Für ältere Systeme liegt am Release
    Bei „ist beschädigt" einmalig im Terminal:
    `xattr -dr com.apple.quarantine <entpackter Ordner>`
 3. Adresse einfügen, Enter. Einstellungen über einen Buchstaben: `f` Format,
-   `a` Auflösung, `o` Zielordner (Ordner ins Fenster ziehen genügt). Leere
-   Eingabe beendet.
+   `a` Auflösung, `o` Zielordner (Ordner ins Fenster ziehen genügt),
+   `n` Anmeldung (siehe „Altersbeschränkte Videos“). Leere Eingabe beendet.
 
 ### Python auf Macs vor 10.15
 
@@ -124,8 +124,8 @@ Hinter Firewall oder Proxy müssen `github.com` und
 Meldet YouTube „Sign in to confirm your age“, braucht yt-dlp eine Anmeldung:
 
 1. In einem Browser bei YouTube anmelden (volljähriges Konto).
-2. Unter **Anmeldung** diesen Browser wählen. yt-dlp liest dessen Cookies bei
-   jedem Download selbst; die App speichert sie nicht.
+2. Unter **Anmeldung** diesen Browser wählen (Terminal-Variante: `n`). yt-dlp
+   liest dessen Cookies bei jedem Download selbst; die App speichert sie nicht.
 3. Unter Windows **Firefox** nehmen: Chrome und Edge verschlüsseln ihre Cookies
    so, dass andere Programme sie nicht lesen können.
 
@@ -137,6 +137,14 @@ Altersbestätigung: im Google-Konto das Alter bestätigen und erneut versuchen.
 Neue Version installieren: unter Windows den neuen Installer ausführen, unter
 macOS die App aus dem neuen DMG über die alte in *Programme* kopieren.
 Einstellungen und geladene Werkzeuge bleiben erhalten.
+
+**Von 0.1.1 auf eine Fassung mit Anmeldung:** Neu ist Deno (~40 MB, siehe
+„Erster Start“). Die App lädt es beim nächsten Start einmal nach. Ist die
+Prüfung beim Programmstart abgeschaltet, im Fenster einmal auf **Prüfen**
+klicken; die Terminal-Variante lädt fehlende Werkzeuge immer beim Start. Die
+Statuszeile zeigt danach `Deno 2.9.8`. Steht dort weiter `Deno fehlt`, startet
+Deno auf diesem System nicht — Downloads laufen trotzdem, nur manche
+YouTube-Videos scheitern dann.
 
 ## Warum die Sicherheitswarnungen?
 

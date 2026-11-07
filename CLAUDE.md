@@ -18,6 +18,16 @@ cargo fmt    --all
 
 Ein einzelner Rust-Test: `cargo test --workspace parse_progress`
 Tests mit Netzzugang: `cargo test --workspace -- --ignored`
+(z. B. `holt_deno_und_prueft_es`: lädt, prüft, entpackt und startet Deno)
+
+Fremde Fehler mit `yt-dlp -v` nachstellen, mit den Werkzeugen der App aus
+`<App-Daten>/bin` (z. B. `--cookies-from-browser firefox --js-runtimes
+deno:<bin>/deno.exe --simulate -- <adresse>`): Die Zeile `JS runtimes:` zeigt,
+ob eine Laufzeit gefunden wurde.
+
+Die CI (`.github/workflows/ci.yml`) nimmt das jeweils neueste stabile Rust: Ein
+neues rustfmt kann alte Stellen anders umbrechen und `cargo fmt --check` rot
+machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen.
 
 ## Architektur
 
@@ -39,8 +49,25 @@ Tests mit Netzzugang: `cargo test --workspace -- --ignored`
   landet, geht durch `tools::download_verified` — Prüfsumme vor dem Ablegen,
   dann atomares Umbenennen. Diesen Weg nicht umgehen.
 - **yt-dlp** wird bei jedem Start geprüft (neueste stabile Version),
-  **ffmpeg** ist auf eine feste Version genagelt und wird nur einmal geladen.
-  Begründung steht im Kopf der jeweiligen Datei.
+  **ffmpeg** und **Deno** sind auf eine feste Version genagelt (Prüfsummen im
+  Programm) und werden nur einmal geladen. Begründung steht im Kopf der
+  jeweiligen Datei.
+- **Deno** ist die JavaScript-Laufzeit für yt-dlp: YouTube stellt Prüfaufgaben,
+  die yt-dlp seit 2025.11 nur in JavaScript löst. Ohne sie kam trotz Cookies
+  „age-restricted“. yt-dlp bekommt den Pfad über `--js-runtimes deno:<Pfad>`
+  (`core::deno::runtime_args`). Archive nur über `tools::unzip_entry`, erst nach
+  `check_sha256` des ganzen Archivs.
+- **Anmeldung** nur über `core::auth::CookieBrowser` (feste Liste, nie ein
+  freier Text an `--cookies-from-browser`). Fehlertexte von yt-dlp laufen durch
+  `auth::explain_error`; die Ursache steht oft in einer Warnung VOR der letzten
+  Fehlerzeile, deshalb das ganze Ende von stderr prüfen.
+- **Adresse immer nach `--`** (`queue::build_args`): eine Eingabe, die mit „-“
+  beginnt, darf nie als Option gelten.
+- **Einstellungen** (`Settings` in `src-tauri` und `cli`, eine gemeinsame Datei)
+  tragen `#[serde(default)]` am Struct: Ein neues Feld darf eine ältere Datei nie
+  verwerfen (sonst ist der Zielordner weg). Neue Felder in BEIDEN Structs
+  eintragen – wer speichert, schreibt die ganze Datei. Felder mit fester Liste
+  nachsichtig lesen (`auth::lenient_browser`).
 - **Version ermitteln** über die Weiterleitung von `/releases/latest`, nie über
   die GitHub-API (ohne Anmeldung 60 Anfragen je Stunde und IP).
 

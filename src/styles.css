@@ -88,6 +88,17 @@ button:disabled { opacity: .45; cursor: default; }
 .dot.spin { background: var(--primary); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .dot.spin { animation: none; } }
+/* Neue Version der App: in der Gold-Marke abgesetzt, ohne zu drängen */
+.tools .tool-line.update {
+  margin-top: 10px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--line));
+  border-radius: 8px;
+  font-size: .86rem;
+}
+.tools .tool-line.update > span:first-child { flex: 1; min-width: 200px; }
+.tools .tool-line.update strong { color: var(--primary); }
+.tools .tool-line.update .sub { color: var(--muted); }
 
 .tag {
   font-size: .72rem;

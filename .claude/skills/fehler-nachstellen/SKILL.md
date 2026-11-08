@@ -137,7 +137,15 @@ erscheinen als `^I`. Felder ohne Wert heißen `NA`.
 
 Abbruch prüfen im Starter: Fortschritt > 0 abwarten, `m.cancel(&id)`, dann `m.busy()` beobachten.
 **Der Platz wird erst frei, wenn kein Prozess die Pipe mehr hält.** Bleibt `busy()` wahr, läuft
-ein yt-dlp weiter. Prozessbaum ansehen:
+ein yt-dlp weiter. Ebenso prüfbar: `m.retry(&id, bin)` direkt nach dem Abbruch muss `false`
+geben (der alte Lauf räumt noch auf), danach `true`; `m.shutdown(Duration::from_secs(3))`
+mitten im Download hinterlässt weder Prozesse noch Dateien.
+
+Den Starter mit **synchronem** `main` schreiben: Wird die Warteschlange (`Manager`, eigener
+tokio-Unterbau) in einem `#[tokio::main]` abgeräumt, bricht tokio am Ende mit „Cannot drop a
+runtime in a context where blocking is not allowed“ ab. Für eine async-Abfrage (z. B.
+`update::check()`) `m.handle().block_on(…)` nehmen. Die App und die Terminal-Variante legen die
+Warteschlange außerhalb von async an. Prozessbaum ansehen:
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='yt-dlp.exe'" | Select ProcessId, ParentProcessId

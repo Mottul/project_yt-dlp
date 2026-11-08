@@ -35,6 +35,36 @@ pub fn default_output_dir() -> PathBuf {
     }
 }
 
+/// Schreibt eine Datei so, dass sie nie halb daliegt: erst daneben, dann
+/// umbenennen (ersetzt die alte in einem Schritt, auch unter Windows).
+///
+/// Fuer `settings.json`: Ein Absturz mitten im Schreiben hinterliess sonst
+/// eine kaputte Datei, die beim naechsten Start als „keine Einstellungen“
+/// gilt -- der Zielordner waere weg.
+pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let written = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(data)?;
+        file.sync_all()
+    })();
+    let result = written.and_then(|_| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        std::fs::remove_file(&tmp).ok();
+    }
+    result
+}
+
 fn home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
@@ -55,5 +85,24 @@ mod tests {
     #[test]
     fn zielordner_ist_absolut() {
         assert!(default_output_dir().is_absolute());
+    }
+
+    #[test]
+    fn schreibt_ganz_oder_gar_nicht() {
+        let dir =
+            std::env::temp_dir().join(format!("mvl-atomar-{}", uuid::Uuid::new_v4().simple()));
+        let file = dir.join("settings.json");
+        write_atomic(&file, b"{\"a\":1}").unwrap();
+        write_atomic(&file, b"{\"a\":2}").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"{\"a\":2}");
+        // Keine Zwischendateien uebrig
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+        // Ziel ist ein Ordner: Fehler, und die Zwischendatei raeumt sich weg
+        let blocked = dir.join("ordner");
+        std::fs::create_dir_all(blocked.join("drin")).unwrap();
+        assert!(write_atomic(&blocked, b"x").is_err());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

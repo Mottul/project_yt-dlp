@@ -18,7 +18,13 @@ const status: ToolsStatus = {
   denoVersion: '2.9.8',
   busy: false,
   lastError: null,
-  pendingMb: 0
+  pendingMb: 0,
+  // Hinweis auf eine neue App-Version, damit er in der Ansicht vorkommt
+  appUpdate: {
+    version: '0.1.4',
+    current: '0.1.3',
+    url: 'https://github.com/Mottul/project_yt-dlp/releases/tag/v0.1.4'
+  }
 }
 
 let settings: Settings = {
@@ -192,6 +198,14 @@ export const demoApi: Api = {
     if (job && (job.status === 'queued' || job.status === 'running')) {
       emit({ ...job, status: 'canceled', speed: null, eta: null, phase: null, phaseLabel: null })
     }
+  },
+  retryJob: async (id: string) => {
+    const job = jobs.find((j) => j.id === id)
+    if (!job || (job.status !== 'error' && job.status !== 'canceled')) {
+      throw new Error('Dieser Auftrag lässt sich gerade nicht neu starten – gleich noch einmal versuchen.')
+    }
+    emit({ ...job, status: 'queued', progress: 0, error: null, note: null, outputFile: null, phase: null, phaseLabel: null })
+    simulate(id, { url: job.url, format: job.format, maxHeight: null, outputDir: job.outputDir, cookies: null })
   },
   clearFinished: async () => {
     jobs = jobs.filter((j) => j.status === 'queued' || j.status === 'running')

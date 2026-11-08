@@ -20,10 +20,13 @@ Starten über `.claude/launch.json` (Konfiguration `oberflaeche`, Port 5183) mit
 Was zu sehen ist:
 
 - „Prüfe Werkzeuge…“ für gut eine Sekunde (verzögerte Statusantwort), dann die Werkzeuge.
+- Hinweis „Neue Version 0.1.4 … verfügbar“ unter dem Werkzeugstatus.
 - Je ein Auftrag in jedem Zustand: lädt mit „Video 1/2“, „Zusammenfügen…“ (pulsierender
-  Balken), wartet, fertig, fertig mit Hinweis „war schon da“, Fehler, abgebrochen.
-- Adresse eingeben und Enter: Ein neuer Auftrag läuft alle Phasen durch (Video 1/2 → Ton 2/2 →
-  Zusammenfügen → fertig, alle 0,6 s ein Schritt). Mit Format „Nur Ton“: Ton → Umwandeln.
+  Balken), wartet, fertig, fertig mit Hinweis „war schon da“, Fehler, abgebrochen. Fehler und
+  abgebrochen tragen „Nochmal“.
+- Adresse eingeben und Enter (oder „Nochmal“): Der Auftrag läuft alle Phasen durch (Video 1/2 →
+  Ton 2/2 → Zusammenfügen → fertig, alle 0,6 s ein Schritt). Mit Format „Nur Ton“: Ton →
+  Umwandeln.
 
 Prüfen:
 
@@ -36,8 +39,9 @@ Prüfen:
   alte Koordinaten trifft dann etwas anderes (so passiert: Text landete nicht im Adressfeld).
 - Bildschirmfotos für das Aussehen: Farben nur über die Variablen in `styles.css`.
 
-Grenzen: Es wird nichts geladen. „Wählen“ (Ordnerdialog) und „Im Ordner zeigen“ brauchen die
-Tauri-Erweiterungen und tun im Browser nichts.
+Grenzen: Es wird nichts geladen. „Wählen“ (Ordnerdialog), „Im Ordner zeigen“ und „Zur
+Release-Seite“ brauchen die Tauri-Erweiterungen und tun im Browser nichts. Was das Fenster
+öffnen darf, steht in `src-tauri/capabilities/default.json` – eine neue Aktion dort eingrenzen.
 
 **Neue Felder oder Zustände** im Kern (`Job`, `ToolsStatus`, `Phase`): in `src/api.ts` eintragen
 und in `src/demo.ts` mitziehen – `base` bekommt das Feld (sonst meldet `tsc` den Fehler), ein

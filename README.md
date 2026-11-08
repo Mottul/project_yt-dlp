@@ -15,6 +15,10 @@ ersten Start unter Windows und macOS.
   geladene Dateien weg; liegt eine Datei schon im Zielordner, steht das dabei
 - Fortschritt mit Phase: Liegen Bild und Ton getrennt vor (YouTube), steht
   „Video 1/2“, „Ton 2/2“, danach „Zusammenfügen…“ bzw. „Umwandeln…“
+- „Nochmal“ für fehlgeschlagene oder abgebrochene Aufträge; beim Schließen
+  werden laufende Downloads beendet und ihre halben Dateien weggeräumt
+- Hinweis, wenn es eine neue Version der App gibt (mit Verweis auf die
+  Release-Seite, kein stilles Selbst-Update – die Pakete sind nicht signiert)
 - Zielordner zu Beginn: „Downloads“ (änderbar)
 - Video als MP4 (Auflösung deckelbar) oder nur Ton als MP3/M4A
 - **yt-dlp bleibt aktuell:** beim Start wird die neueste stabile Version

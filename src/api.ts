@@ -38,11 +38,11 @@ export interface Job {
   createdAt: number
 }
 
-export type Phase = 'download' | 'video' | 'audio' | 'merge' | 'convert' | 'finish'
+export type Phase = 'prepare' | 'download' | 'video' | 'audio' | 'merge' | 'convert' | 'finish'
 
-/** Nacharbeit: kein messbarer Fortschritt mehr */
-export const isPostPhase = (phase: Phase | null): boolean =>
-  phase === 'merge' || phase === 'convert' || phase === 'finish'
+/** Ohne messbaren Fortschritt: Abfrage der Seite und Nacharbeit (wie `Phase::is_indeterminate`) */
+export const isIndeterminate = (phase: Phase | null): boolean =>
+  phase === 'prepare' || phase === 'merge' || phase === 'convert' || phase === 'finish'
 
 export interface ToolsStatus {
   ytdlpVersion: string | null
@@ -77,6 +77,7 @@ export interface Settings {
 }
 
 export interface EnqueueRequest {
+  /** Eine oder mehrere Adressen, eine je Zeile – der Kern zerlegt sie */
   url: string
   format: Format
   maxHeight: number | null
@@ -87,7 +88,8 @@ export interface EnqueueRequest {
 const tauriApi = {
   toolsStatus: () => invoke<ToolsStatus>('tools_status'),
   ensureTools: () => invoke<ToolsStatus>('ensure_tools'),
-  enqueue: (req: EnqueueRequest) => invoke<string>('enqueue', { req }),
+  /** Ein Auftrag je gefundener Adresse; zurück kommen ihre Kennungen */
+  enqueue: (req: EnqueueRequest) => invoke<string[]>('enqueue', { req }),
   listJobs: () => invoke<Job[]>('list_jobs'),
   cancelJob: (id: string) => invoke<void>('cancel_job', { id }),
   clearFinished: () => invoke<void>('clear_finished'),

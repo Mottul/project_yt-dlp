@@ -34,9 +34,11 @@ Wiederkehrende Abläufe als Projekt-Skills in `.claude/skills/`. Jede Änderung
 zieht sie mit: neue Fehlerbilder, Muster, Lehren.
 
 - `fehler-nachstellen` – Fehler mit den Werkzeugen der App nachstellen, lokaler
-  Testserver (auch DASH mit getrenntem Bild und Ton), Gegenprobe
+  Testserver (auch DASH mit getrenntem Bild und Ton), Strg+C in der
+  Terminal-Variante, Gegenprobe
 - `oberflaeche-pruefen` – Oberfläche im Browser mit Beispieldaten (`src/demo.ts`,
-  greift nur bei `npm run dev` außerhalb von Tauri) oder im echten Fenster
+  greift nur bei `npm run dev` außerhalb von Tauri), Drag & Drop nachstellen,
+  oder im echten Fenster
 - `veroeffentlichen` – Version anheben, Release-Workflow, Entwurf prüfen, Notizen,
   veröffentlichen
 
@@ -103,7 +105,21 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
   über die Anzeige für Menschen – die wechselt Felder je nach Lage. `LineState`
   ist rein und wird mit echten, aufgezeichneten Zeilen getestet; neue Zeilenarten
   ebenso. Texte der Phasen formuliert der Kern (`Phase::label`), nicht die
-  Oberflächen. Die gewohnte Zeile `[download] x%` bleibt als Rückfall.
+  Oberflächen. Die gewohnte Zeile `[download] x%` bleibt als Rückfall. Bis zum
+  ersten Fortschritt gilt `Phase::Prepare` („Abfragen…“, gesetzt in
+  `schedule`): Titel und Größe stehen erst nach der Abfrage der Seite fest,
+  früher geht es nicht.
+- **Adressen zerlegt der Kern** (`queue::split_addresses`), für Fenster
+  (`enqueue` nimmt Text mit mehreren Adressen) und Terminal. Das Adressfeld ist
+  ein `textarea`: Ein einzeiliges `input` entfernt beim Einfügen die
+  Zeilenumbrüche und klebt die Adressen zusammen.
+- **Drag & Drop** über HTML5, dafür `dragDropEnabled: false` im Fenster (sonst
+  fängt Tauri unter Windows jedes Ziehen ab). Jedes Ziehen mit
+  `preventDefault` abfangen: Eine fallen gelassene Datei öffnete das Fenster
+  sonst an Stelle der App.
+- **Benachrichtigung** nur aus Rust (`WindowSink` in `src-tauri`), die
+  Oberfläche bekommt dafür keine Berechtigung. Eine Meldung, wenn nichts mehr
+  wartet oder läuft und das Fenster nicht vorn liegt – nicht eine je Download.
 - **Einstellungen** (`Settings` in `src-tauri` und `cli`, eine gemeinsame Datei)
   tragen `#[serde(default)]` am Struct: Ein neues Feld darf eine ältere Datei nie
   verwerfen (sonst ist der Zielordner weg). Neue Felder in BEIDEN Structs
@@ -113,7 +129,9 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
 - **Neu starten und Schließen** (`Manager::retry`, `Manager::shutdown`): Ein Lauf
   gilt erst als beendet, wenn auch sein Aufräumen durch ist (`Inner::running`).
   Vorher darf derselbe Auftrag nicht neu starten – das Aufräumen löschte sonst
-  die `.part`-Datei des neuen Laufs.
+  die `.part`-Datei des neuen Laufs. Die Terminal-Variante ruft `shutdown` bei
+  Strg+C (`stop_on_ctrl_c`); danach zeichnet ihr Hauptfaden nichts mehr
+  (`STOPPING`), das Programm endet mit Code 130.
 - **Hinweis auf eine neue App-Version** (`core::update`): über die Weiterleitung
   von `/releases/latest`, streng geprüft, still ohne Netz. Nur Hinweis mit
   Verweis, kein Selbst-Update (Pakete unsigniert). Die Fenster-App darf nur die

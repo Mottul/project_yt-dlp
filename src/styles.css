@@ -24,7 +24,7 @@ body {
   user-select: none;
 }
 
-input, select, button { font: inherit; }
+input, select, button, textarea { font: inherit; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; color: var(--muted); }
 
 .app { max-width: 820px; margin: 0 auto; padding: 18px 18px 28px; display: grid; gap: 14px; }
@@ -44,12 +44,14 @@ header .sub { color: var(--muted); font-size: .84rem; }
 
 .row { display: flex; align-items: center; gap: 10px; }
 .row.wrap { flex-wrap: wrap; align-items: flex-end; }
+/* Knopf oben neben dem mitwachsenden Adressfeld */
+.row.top { align-items: flex-start; }
 .grow { flex: 1; min-width: 0; }
 
 label { display: grid; gap: 5px; min-width: 0; }
 label > span { font-size: .76rem; color: var(--muted); }
 
-input[type="text"], input:not([type]), select {
+input[type="text"], input:not([type]), select, textarea {
   background: #0b0b0e;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -60,7 +62,9 @@ input[type="text"], input:not([type]), select {
   user-select: text;
 }
 input[readonly] { color: var(--muted); }
-input:focus-visible, select:focus-visible, button:focus-visible {
+/* Sieht aus wie eine Eingabezeile und wächst je Adresse um eine Zeile */
+textarea.address { resize: none; line-height: 1.4; overflow-x: auto; }
+input:focus-visible, select:focus-visible, button:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
@@ -162,5 +166,21 @@ footer {
   font-size: .78rem;
 }
 .check { display: flex; align-items: center; gap: 8px; }
+
+/* Ziehen ins Fenster: ganze Fläche als Ziel, in der Gold-Marke */
+.drop {
+  position: fixed;
+  inset: 10px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--primary);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--primary);
+  font-size: 1.05rem;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
 .check input { width: 15px; height: 15px; accent-color: var(--primary); }
 .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }

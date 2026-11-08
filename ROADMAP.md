@@ -10,13 +10,16 @@ Begründung und Stelle im Code eintragen.
   prüfen: Hinweis erscheint, „Zur Release-Seite“ öffnet den Browser (die
   Berechtigung `opener:allow-open-url` ist eingegrenzt und lief bisher nur im
   Bau, nicht im Fenster).
+- [ ] **Benachrichtigung und Drag & Drop im echten Fenster sehen.** Geprüft
+  sind die Logik (Tests in `src-tauri/src/lib.rs`), der Start der App mit
+  dem Plugin und die Drag-Ereignisse im Browser – nicht die Meldung selbst
+  und nicht ein echter Link aus Firefox/Chrome ins Fenster
+  (`dragDropEnabled: false` in `tauri.conf.json`). Unter Windows erscheint die
+  Meldung im Entwicklungsmodus unter „Windows PowerShell“, erst installiert
+  unter dem Namen der App.
 
 ## Anzeige
 
-- [ ] **Titel schon während der Abfrage.** Der Titel kommt mit der ersten
-  Fortschrittszeile; davor (yt-dlp fragt die Seite ab, einige Sekunden) steht
-  die Adresse. `--print` scheidet aus (schaltet die übrigen Meldungen ab);
-  vielleicht `--print-to-file` – erst prüfen, ob es das auch tut.
 - [ ] **Gleicher Titel, anderes Video.** Heute nur der Hinweis „war schon im
   Zielordner“. Als Einstellung die Video-ID in den Dateinamen nehmen
   (`%(title)s [%(id)s].%(ext)s`, `queue::build_args`).
@@ -25,19 +28,16 @@ Begründung und Stelle im Code eintragen.
 
 - [ ] **Playlists und Kanäle.** `--no-playlist` ist fest gesetzt. Braucht eine
   Abfrage vorab (Anzahl, Bestätigung) und einen Auftrag je Video.
-- [ ] **Mehrere Adressen auf einmal** einfügen (eine je Zeile) oder per
-  Drag & Drop ins Fenster ziehen.
-- [ ] **Systembenachrichtigung**, wenn ein Download fertig ist
-  (`tauri-plugin-notification`).
+- [ ] **Mehrere Zeilen in der Terminal-Variante.** Eingefügte Zeilen liest sie
+  einzeln: Die erste startet, die nächste erst, wenn diese durch ist. Mehrere
+  Adressen in EINER Zeile (durch Leerzeichen getrennt) laufen schon
+  gleichzeitig (`cli/src/main.rs`, `prompt`).
 - [ ] **„Nochmal“ in der Terminal-Variante.** Der Kern kann es
   (`Manager::retry`); die Terminal-Variante hat bisher keine Bedienung für
   einzelne Aufträge.
 
 ## Technik
 
-- [ ] **Strg+C in der Terminal-Variante** räumt nicht auf: Unter Windows beendet
-  das Job-Objekt yt-dlp, die `.part`-Dateien bleiben. Ein Handler, der
-  `Manager::shutdown` ruft, hätte das Fenster-Verhalten.
 - [ ] **Versionen über den Neustart merken** (optional). Die erste
   Werkzeugprüfung nach dem Start dauert unter Windows rund 2 s, weil yt-dlp
   und Deno je einmal starten. Mit gespeicherten Versionen (je Datei mit Größe

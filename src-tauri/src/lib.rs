@@ -3,23 +3,111 @@
 //! Die Arbeit macht `mottul-video-core`; hier haengen nur die Tauri-Befehle,
 //! der Zustand und die Weitergabe der Fortschrittsmeldungen ans Fenster.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use core::queue::{EnqueueRequest, Job, JobSink, Manager};
+use core::queue::{EnqueueRequest, Job, JobSink, JobStatus, Manager};
 use mottul_video_core as core;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager as _, State};
+use tauri_plugin_notification::NotificationExt;
 
 pub const JOB_EVENT: &str = "job-update";
 pub const STATUS_EVENT: &str = "tools-status";
 
-/// Reicht jede Aenderung an einem Auftrag als Ereignis ans Fenster weiter.
-struct WindowSink(AppHandle);
+/// Reicht jede Aenderung an einem Auftrag als Ereignis ans Fenster weiter und
+/// meldet sich beim System, wenn alles durch ist.
+struct WindowSink {
+    app: AppHandle,
+    finished: Mutex<Finished>,
+}
 
 impl JobSink for WindowSink {
     fn on_update(&self, job: &Job) {
-        let _ = self.0.emit(JOB_EVENT, job.clone());
+        let _ = self.app.emit(JOB_EVENT, job.clone());
+
+        // Vor der eigenen Sperre: `list()` sperrt die Warteschlange, und die
+        // ruft hierher nie mit gehaltener Sperre.
+        let idle = self
+            .app
+            .try_state::<AppState>()
+            .is_some_and(|state| state.manager.list().iter().all(|j| !j.status.is_open()));
+        let Some((title, body)) = self.finished.lock().unwrap().update(job, idle) else {
+            return;
+        };
+        // Wer auf das Fenster schaut, sieht es dort schon
+        let focused = self
+            .app
+            .get_webview_window("main")
+            .and_then(|w| w.is_focused().ok())
+            .unwrap_or(false);
+        if !focused {
+            let _ = self
+                .app
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show();
+        }
+    }
+}
+
+/// Was seit der letzten Benachrichtigung fertig wurde. Gemeldet wird erst, wenn
+/// nichts mehr wartet oder laeuft: Bei zehn eingefuegten Adressen kommt eine
+/// Meldung, nicht zehn.
+#[derive(Default)]
+struct Finished {
+    /// Letzter bekannter Stand je Auftrag -- erkennt den Uebergang, auch wenn
+    /// derselbe Stand noch einmal gemeldet wird.
+    seen: HashMap<String, JobStatus>,
+    done: Vec<String>,
+    failed: Vec<String>,
+}
+
+impl Finished {
+    /// Nimmt eine Aenderung entgegen; liefert Titel und Text, wenn jetzt
+    /// benachrichtigt werden soll. `idle`: nichts wartet oder laeuft mehr.
+    fn update(&mut self, job: &Job, idle: bool) -> Option<(String, String)> {
+        if self.seen.insert(job.id.clone(), job.status) == Some(job.status) {
+            return None;
+        }
+        let name = job.title.clone().unwrap_or_else(|| job.url.clone());
+        match job.status {
+            JobStatus::Done => self.done.push(name),
+            JobStatus::Error => self.failed.push(name),
+            // Abgebrochen hat der Nutzer selbst; beendet aber trotzdem die Runde
+            JobStatus::Canceled => {}
+            JobStatus::Queued | JobStatus::Running => return None,
+        }
+        if !idle {
+            return None;
+        }
+        let message = summary(&self.done, &self.failed);
+        self.done.clear();
+        self.failed.clear();
+        message
+    }
+}
+
+/// Titel und Text der Benachrichtigung; None, wenn nichts fertig wurde.
+fn summary(done: &[String], failed: &[String]) -> Option<(String, String)> {
+    let names = |list: &[String]| match list {
+        [a, b, c] => format!("{a}, {b}, {c}"),
+        [a, b, rest @ ..] if !rest.is_empty() => format!("{a}, {b} und {} weitere", rest.len()),
+        _ => list.join(", "),
+    };
+    match (done.len(), failed.len()) {
+        (0, 0) => None,
+        (1, 0) => Some(("Download fertig".into(), names(done))),
+        (n, 0) => Some((format!("{n} Downloads fertig"), names(done))),
+        (0, 1) => Some(("Download fehlgeschlagen".into(), names(failed))),
+        (0, n) => Some((format!("{n} Downloads fehlgeschlagen"), names(failed))),
+        (d, f) => Some((
+            "Downloads beendet".into(),
+            format!("{d} fertig, {f} fehlgeschlagen"),
+        )),
     }
 }
 
@@ -161,15 +249,26 @@ async fn ensure_tools(app: AppHandle) -> Result<core::ToolsStatus, String> {
     Ok(status)
 }
 
+/// Stellt einen Auftrag je Adresse ein. `req.url` darf mehrere enthalten, eine
+/// je Zeile oder durch Leerraum getrennt (eingefuegte Liste, gezogene Links);
+/// zerlegt wird im Kern ([`core::queue::split_addresses`]).
 #[tauri::command]
-fn enqueue(req: EnqueueRequest, state: State<'_, AppState>) -> Result<String, String> {
-    if req.url.trim().is_empty() {
-        return Err("Keine Adresse angegeben".into());
-    }
+fn enqueue(req: EnqueueRequest, state: State<'_, AppState>) -> Result<Vec<String>, String> {
     if req.output_dir.trim().is_empty() {
         return Err("Kein Zielordner gewählt".into());
     }
-    Ok(state.manager.enqueue(req, state.bin_dir.clone()))
+    let urls = core::queue::split_addresses(&req.url);
+    if urls.is_empty() {
+        return Err("Keine Adresse gefunden".into());
+    }
+    Ok(urls
+        .into_iter()
+        .map(|url| {
+            state
+                .manager
+                .enqueue(EnqueueRequest { url, ..req.clone() }, state.bin_dir.clone())
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -222,9 +321,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let manager = Manager::new(Arc::new(WindowSink(app.handle().clone())))?;
+            let manager = Manager::new(Arc::new(WindowSink {
+                app: app.handle().clone(),
+                finished: Mutex::new(Finished::default()),
+            }))?;
             let state = AppState {
                 bin_dir: core::tools::bin_dir(&data_dir),
                 settings_file: data_dir.join("settings.json"),
@@ -269,4 +372,96 @@ pub fn run() {
                     .shutdown(std::time::Duration::from_secs(3));
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(id: &str, status: JobStatus, title: Option<&str>) -> Job {
+        Job {
+            id: id.into(),
+            url: format!("https://example.com/{id}"),
+            format: core::Format::Video,
+            status,
+            progress: 0.0,
+            title: title.map(str::to_string),
+            speed: None,
+            eta: None,
+            output_dir: "z".into(),
+            output_file: None,
+            error: None,
+            note: None,
+            phase: None,
+            phase_label: None,
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn eine_meldung_wenn_alles_durch_ist() {
+        let mut f = Finished::default();
+        assert_eq!(f.update(&job("a", JobStatus::Running, None), false), None);
+        // b laeuft noch: nichts melden
+        assert_eq!(
+            f.update(&job("a", JobStatus::Done, Some("Film")), false),
+            None
+        );
+        assert_eq!(
+            f.update(&job("b", JobStatus::Done, Some("Clip")), true),
+            Some(("2 Downloads fertig".into(), "Film, Clip".into()))
+        );
+        // Dieselbe Meldung noch einmal ist kein neuer Uebergang
+        assert_eq!(
+            f.update(&job("b", JobStatus::Done, Some("Clip")), true),
+            None
+        );
+    }
+
+    #[test]
+    fn fehler_und_abbruch() {
+        let mut f = Finished::default();
+        assert_eq!(
+            f.update(&job("a", JobStatus::Error, None), true),
+            Some((
+                "Download fehlgeschlagen".into(),
+                "https://example.com/a".into()
+            )),
+            "ohne Titel die Adresse"
+        );
+        // Selbst abgebrochen: keine Meldung, aber die Runde ist zu Ende
+        assert_eq!(f.update(&job("b", JobStatus::Done, Some("X")), false), None);
+        assert_eq!(
+            f.update(&job("c", JobStatus::Canceled, None), true),
+            Some(("Download fertig".into(), "X".into()))
+        );
+        assert_eq!(f.update(&job("d", JobStatus::Canceled, None), true), None);
+        // „Nochmal“: Fehler -> wartet -> fertig ist ein neuer Uebergang
+        f.update(&job("a", JobStatus::Queued, None), false);
+        assert_eq!(
+            f.update(&job("a", JobStatus::Done, Some("A")), true),
+            Some(("Download fertig".into(), "A".into()))
+        );
+    }
+
+    #[test]
+    fn texte_der_meldung() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(summary(&[], &[]), None);
+        assert_eq!(
+            summary(&s(&["a", "b", "c", "d", "e"]), &[]),
+            Some(("5 Downloads fertig".into(), "a, b und 3 weitere".into()))
+        );
+        assert_eq!(
+            summary(&s(&["a", "b"]), &s(&["c"])),
+            Some((
+                "Downloads beendet".into(),
+                "2 fertig, 1 fehlgeschlagen".into()
+            ))
+        );
+        assert_eq!(
+            summary(&[], &s(&["x", "y"])),
+            Some(("2 Downloads fehlgeschlagen".into(), "x, y".into()))
+        );
+    }
 }

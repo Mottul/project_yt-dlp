@@ -66,6 +66,15 @@ let jobs: Job[] = [
   },
   {
     ...base,
+    id: 'demo-prepare',
+    url: 'https://www.youtube.com/watch?v=demo8',
+    status: 'running',
+    phase: 'prepare',
+    phaseLabel: 'Abfragen…',
+    createdAt: now - 500
+  },
+  {
+    ...base,
     id: 'demo-merge',
     url: 'https://www.arte.tv/de/videos/demo2',
     status: 'running',
@@ -136,7 +145,8 @@ const wait = <T>(ms: number, value: T): Promise<T> =>
 /** Spielt einen Auftrag durch: Video, Ton, Zusammenfügen bzw. Umwandeln, fertig. */
 function simulate(id: string, req: EnqueueRequest): void {
   const audio = req.format !== 'video'
-  const steps: Array<Partial<Job>> = []
+  const prepare = { phase: 'prepare' as const, phaseLabel: 'Abfragen…' }
+  const steps: Array<Partial<Job>> = [prepare, prepare, prepare]
   for (let p = 0; p <= 100; p += 10) {
     steps.push(
       audio
@@ -170,7 +180,10 @@ function simulate(id: string, req: EnqueueRequest): void {
       timers.delete(id)
       return
     }
-    emit({ ...job, status: 'running', title: 'Neues Video', ...steps[i++] })
+    const step = steps[i++]
+    // Den Titel gibt es erst nach der Abfrage
+    const title = step.phase === 'prepare' ? null : 'Neues Video'
+    emit({ ...job, status: 'running', title, ...step })
   }, 600)
   timers.set(id, timer)
 }
@@ -185,12 +198,18 @@ export const demoApi: Api = {
     return { ...status }
   },
   enqueue: async (req: EnqueueRequest) => {
-    const id = `demo-${Date.now()}`
-    const job: Job = { ...base, id, url: req.url, format: req.format, status: 'queued', createdAt: Date.now() }
-    jobs = [job, ...jobs]
-    jobListeners.forEach((cb) => cb({ ...job }))
-    simulate(id, req)
-    return id
+    // Vereinfacht wie `split_addresses` im Kern: ein Wort bleibt, sonst nur Webadressen
+    const words = req.url.split(/\s+/).filter(Boolean)
+    const urls = words.length === 1 ? words : words.filter((w) => /^(https?:\/\/|www\.)/i.test(w))
+    if (urls.length === 0) throw new Error('Keine Adresse gefunden')
+    return [...new Set(urls)].map((url, i) => {
+      const id = `demo-${Date.now()}-${i}`
+      const job: Job = { ...base, id, url, format: req.format, status: 'queued', createdAt: Date.now() + i }
+      jobs = [job, ...jobs]
+      jobListeners.forEach((cb) => cb({ ...job }))
+      simulate(id, { ...req, url })
+      return id
+    })
   },
   listJobs: async () => jobs.map((j) => ({ ...j })),
   cancelJob: async (id: string) => {

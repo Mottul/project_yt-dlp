@@ -18,6 +18,9 @@ mottul-video-core.workspace = true
 tauri = { version = "2.11", features = [] }
 tauri-plugin-dialog = "2.7"
 tauri-plugin-opener = "2.5"
+# Benachrichtigung, wenn Downloads fertig sind -- nur aus Rust; die Oberflaeche
+# bekommt dafuer keine Berechtigung.
+tauri-plugin-notification = "2.4"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

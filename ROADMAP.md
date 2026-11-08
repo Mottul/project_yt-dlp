@@ -5,9 +5,6 @@ Begründung und Stelle im Code eintragen.
 
 ## Veröffentlichen
 
-- [ ] **Alte Entwürfe löschen.** v0.1.0 und v0.1.1 wurden nie veröffentlicht
-  (Stand September) und sind durch v0.1.2 überholt. Nur nach Rückfrage –
-  Löschen ist endgültig.
 - [ ] **0.1.3** mit der Phasenanzeige und den Skills (Skill `veroeffentlichen`).
 
 ## Anzeige

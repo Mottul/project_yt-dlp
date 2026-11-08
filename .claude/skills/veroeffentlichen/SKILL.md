@@ -5,7 +5,7 @@ description: Eine neue Version des MottulVideoLoader veröffentlichen – Versio
 
 # Veröffentlichen
 
-So durchlaufen bei 0.1.2 und 0.1.3 (8.11.2026). Der Workflow baut rund 6½–7 Minuten.
+So durchlaufen bei 0.1.2, 0.1.3 und 0.1.4 (8.11.2026). Der Workflow baut rund 6½–7 Minuten.
 
 **Öffentlich:** Einen geprüften Entwurf veröffentlichen (Schritt 5) hat der Nutzer dauerhaft
 erlaubt (8.11.2026). Auf seinem Rechner steht dafür `Bash(gh release edit *)` in
@@ -84,8 +84,9 @@ curl -s -o /dev/null -w "%{redirect_url}\n" https://github.com/Mottul/project_yt
 
 Der Tag entsteht erst jetzt, am `targetCommitish` des Entwurfs. `/releases/latest` muss auf
 `…/tag/v<version>` zeigen – darauf baut der Update-Hinweis der App (`core::update`).
-Die Adresse ist zwischengespeichert und zeigt nach dem Veröffentlichen noch eine Weile die
-Vorversion (bei 0.1.3 länger als fünf Minuten). Frisch fragen mit einem Anhang, z. B.
+Die Adresse ist zwischengespeichert und zeigt nach dem Veröffentlichen unter Umständen noch eine
+Weile die Vorversion (bei 0.1.3 länger als fünf Minuten, bei 0.1.4 sofort richtig). Frisch
+fragen mit einem Anhang, z. B.
 `…/releases/latest?x=1`. Die App fragt ohne Anhang und sieht die neue Version entsprechend
 später – kein Fehler.
 GitHub antwortet dort gelegentlich mit 504; dann später noch einmal fragen.
@@ -107,7 +108,11 @@ GitHub antwortet dort gelegentlich mit 504; dann später noch einmal fragen.
 - **`gh run watch` endet manchmal vorzeitig mit Code 1**, während ein Job noch abschließt
   („Complete job“). Dann `gh run view <id> --json status,conclusion,jobs` erneut abfragen, bis
   `completed` dasteht – die Dateien hängen meist schon am Entwurf.
-- Die Seite eines Entwurfs heißt `…/releases/tag/untagged-…`, nicht `…/tag/v<version>`.
+- Die Seite eines Entwurfs heißt `…/releases/tag/untagged-…`, nicht `…/tag/v<version>`. Das
+  Anhängen der Notizen vergibt eine neue `untagged-…`-Adresse (so bei 0.1.4) – es bleibt
+  derselbe Entwurf; `gh release list` zeigt, dass es nur einen gibt.
+- `gh release edit` ohne `cd` aufrufen, mit `--repo Mottul/project_yt-dlp` – so greift die
+  Erlaubnisregel.
 - `gh release view --json isLatest` gibt es nicht; „latest“ zeigt die Weiterleitung oben.
 - Ein Entwurf hat noch keinen Tag: `git tag` zeigt ihn erst nach dem Veröffentlichen.
 - Der Workflow nimmt das neueste stabile Rust; ein roter Bau ohne eigene Änderung kann an einem

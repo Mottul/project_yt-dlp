@@ -5,11 +5,12 @@ Begründung und Stelle im Code eintragen.
 
 ## Veröffentlichen
 
-- [ ] **Update-Hinweis im echten Fenster sehen.** Ihn kennt erst 0.1.3; zu
-  sehen ist er also, sobald 0.1.4 erscheint. Dann in einer installierten 0.1.3
-  prüfen: Hinweis erscheint, „Zur Release-Seite“ öffnet den Browser (die
-  Berechtigung `opener:allow-open-url` ist eingegrenzt und lief bisher nur im
-  Bau, nicht im Fenster).
+- [ ] **Update-Hinweis im echten Fenster sehen.** 0.1.4 ist erschienen
+  (8.11.2026), `/releases/latest` leitet darauf weiter. Jetzt in einer
+  installierten 0.1.3 prüfen: Hinweis „Neue Version 0.1.4“ erscheint nach der
+  Startprüfung, „Zur Release-Seite“ öffnet den Browser (die Berechtigung
+  `opener:allow-open-url` ist eingegrenzt und lief bisher nur im Bau, nicht im
+  Fenster).
 - [ ] **Benachrichtigung und Drag & Drop im echten Fenster sehen.** Geprüft
   sind die Logik (Tests in `src-tauri/src/lib.rs`), der Start der App mit
   dem Plugin und die Drag-Ereignisse im Browser – nicht die Meldung selbst

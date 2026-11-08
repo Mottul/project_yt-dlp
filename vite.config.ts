@@ -6,6 +6,13 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 5183, strictPort: true },
+  server: {
+    port: 5183,
+    strictPort: true,
+    // Nur die Oberfläche beobachten. In target/ sperrt Cargo beim Bauen Dateien;
+    // Vite stürzte dann mit EBUSY ab (8.11.2026, während `cargo clippy`) – bei
+    // `npm run app:dev` bauen beide gleichzeitig.
+    watch: { ignored: ['**/target/**', '**/src-tauri/**', '**/core/**', '**/cli/**'] }
+  },
   build: { target: 'es2022', sourcemap: false }
 })

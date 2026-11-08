@@ -78,7 +78,52 @@ pub struct Job {
     pub error: Option<String>,
     /// Hinweis ohne Fehler, z. B. dass die Datei schon da war.
     pub note: Option<String>,
+    /// Was gerade geschieht; None vor dem ersten Fortschritt und nach dem Ende.
+    pub phase: Option<Phase>,
+    /// Dasselbe als Text fuer die Anzeige, z. B. „Video 1/2“ -- im Kern, damit
+    /// Fenster und Terminal dasselbe sagen.
+    pub phase_label: Option<String>,
     pub created_at: u64,
+}
+
+/// Abschnitt eines Downloads. Liegen Bild und Ton getrennt vor (YouTube), laedt
+/// yt-dlp sie nacheinander, danach fuegt ffmpeg sie zusammen -- vorher lief der
+/// Balken dabei zweimal von 0 auf 100 % und stand dann lange auf 99 %.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Phase {
+    /// Datei mit Bild und Ton, oder der Inhalt ist nicht bekannt
+    Download,
+    Video,
+    Audio,
+    Merge,
+    Convert,
+    /// sonstige Nacharbeit (Reparatur, Metadaten)
+    Finish,
+}
+
+impl Phase {
+    /// Text fuer die Anzeige; `stream` von `streams` Teilstroemen.
+    pub fn label(self, stream: u32, streams: u32) -> String {
+        let count = if streams > 1 && stream > 0 {
+            format!(" {stream}/{streams}")
+        } else {
+            String::new()
+        };
+        match self {
+            Phase::Download => "lädt".into(),
+            Phase::Video => format!("Video{count}"),
+            Phase::Audio => format!("Ton{count}"),
+            Phase::Merge => "Zusammenfügen…".into(),
+            Phase::Convert => "Umwandeln…".into(),
+            Phase::Finish => "Nachbearbeiten…".into(),
+        }
+    }
+
+    /// Nacharbeit: kein messbarer Fortschritt mehr.
+    pub fn is_post(self) -> bool {
+        matches!(self, Phase::Merge | Phase::Convert | Phase::Finish)
+    }
 }
 
 /// Hinweis, wenn yt-dlp nichts laedt, weil die Datei schon im Zielordner liegt.
@@ -127,6 +172,285 @@ pub fn parse_progress(line: &str) -> Option<Progress> {
         }
     }
     Some(out)
+}
+
+/// Vorlagen fuer `--progress-template`: eine Zeile je Meldung, Felder mit
+/// Tabulator getrennt, der Titel zuletzt (er darf selbst Tabulatoren
+/// enthalten). Die Anzeige fuer Menschen wechselt je nach Lage Felder und
+/// Reihenfolge; hier kommen Rohwerte, und die Codecs verraten, ob gerade Bild
+/// oder Ton laedt (`none` = fehlt in diesem Teilstrom).
+pub const PROGRESS_TEMPLATES: [&str; 2] = [
+    "download:[mvl]dl\t%(progress.status)s\t%(progress.downloaded_bytes)s\t\
+     %(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t\
+     %(progress.eta)s\t%(info.format_id)s\t%(info.vcodec)s\t%(info.acodec)s\t%(info.title)s",
+    "postprocess:[mvl]pp\t%(progress.status)s\t%(progress.postprocessor)s",
+];
+
+const MARK_DOWNLOAD: &str = "[mvl]dl\t";
+const MARK_POST: &str = "[mvl]pp\t";
+
+/// Eine Fortschrittszeile nach [`PROGRESS_TEMPLATES`].
+#[derive(Debug, Default, PartialEq)]
+pub struct DownloadTick {
+    pub finished: bool,
+    pub downloaded: Option<f64>,
+    /// Gesamtgroesse, sonst die Schaetzung von yt-dlp
+    pub total: Option<f64>,
+    /// Bytes je Sekunde
+    pub speed: Option<f64>,
+    /// Sekunden
+    pub eta: Option<u64>,
+    pub format_id: Option<String>,
+    pub vcodec: Option<String>,
+    pub acodec: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TemplateLine {
+    Download(DownloadTick),
+    /// Ein Nacharbeitsschritt (`Merger`, `ExtractAudio`, …) beginnt oder endet.
+    Post {
+        started: bool,
+        name: String,
+    },
+}
+
+/// „NA“ (fehlt) und leere Felder sind keine Angabe.
+fn field(raw: &str) -> Option<&str> {
+    let s = raw.trim();
+    (!s.is_empty() && s != "NA" && s != "None").then_some(s)
+}
+
+fn number(raw: &str) -> Option<f64> {
+    field(raw)
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+}
+
+/// Liest eine Zeile nach [`PROGRESS_TEMPLATES`]; andere Zeilen ergeben None.
+pub fn parse_template_line(line: &str) -> Option<TemplateLine> {
+    if let Some(rest) = line.strip_prefix(MARK_DOWNLOAD) {
+        let f: Vec<&str> = rest.splitn(10, '\t').collect();
+        if f.len() < 10 {
+            return None;
+        }
+        let text = |raw: &str| field(raw).map(String::from);
+        return Some(TemplateLine::Download(DownloadTick {
+            finished: f[0].trim() == "finished",
+            downloaded: number(f[1]),
+            total: number(f[2])
+                .filter(|t| *t > 0.0)
+                .or_else(|| number(f[3]).filter(|t| *t > 0.0)),
+            speed: number(f[4]),
+            eta: number(f[5]).map(|v| v as u64),
+            format_id: text(f[6]),
+            vcodec: text(f[7]),
+            acodec: text(f[8]),
+            title: text(f[9]),
+        }));
+    }
+    let rest = line.strip_prefix(MARK_POST)?;
+    let (status, name) = rest.split_once('\t')?;
+    let name = field(name)?.to_string();
+    match status.trim() {
+        "started" => Some(TemplateLine::Post {
+            started: true,
+            name,
+        }),
+        "finished" => Some(TemplateLine::Post {
+            started: false,
+            name,
+        }),
+        _ => None,
+    }
+}
+
+/// „[info] abc: Downloading 1 format(s): 137+140“ -> 2: Bild und Ton getrennt.
+pub fn parse_stream_count(line: &str) -> Option<u32> {
+    let rest = line.trim().strip_prefix("[info] ")?;
+    let (_, formats) = rest.split_once(" format(s): ")?;
+    let n = formats
+        .split('+')
+        .filter(|part| !part.trim().is_empty())
+        .count() as u32;
+    (n > 0).then_some(n)
+}
+
+/// 2722003.8 -> „2,7 MB/s“: SI-Einheiten, Dezimalkomma.
+pub fn format_speed(bytes_per_s: f64) -> Option<String> {
+    if !bytes_per_s.is_finite() || bytes_per_s <= 0.0 {
+        return None;
+    }
+    let (value, unit) = match bytes_per_s {
+        b if b >= 1e9 => (b / 1e9, "GB/s"),
+        b if b >= 1e6 => (b / 1e6, "MB/s"),
+        b if b >= 1e3 => (b / 1e3, "kB/s"),
+        b => (b, "B/s"),
+    };
+    let text = if value >= 100.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.1}")
+    };
+    Some(format!("{} {unit}", text.replace('.', ",")))
+}
+
+/// 42 -> „0:42“, 3723 -> „1:02:03“.
+pub fn format_eta(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// Welcher Teilstrom: `none` beim Bild-Codec heisst „nur Ton“ und umgekehrt.
+fn stream_phase(vcodec: Option<&str>, acodec: Option<&str>) -> Phase {
+    match (vcodec, acodec) {
+        (Some("none"), _) => Phase::Audio,
+        (_, Some("none")) => Phase::Video,
+        _ => Phase::Download,
+    }
+}
+
+/// Was die Ausgabe eines Laufs bisher ergeben hat. Rein: liest Zeilen und
+/// startet nichts -- die Warteschlange uebertraegt den Stand in den Auftrag.
+#[derive(Debug, Default, Clone)]
+pub struct LineState {
+    /// 0..1 ueber alle Teilstroeme, steigt nur
+    pub progress: f64,
+    pub speed: Option<String>,
+    pub eta: Option<String>,
+    pub phase: Option<Phase>,
+    /// laufender Teilstrom, ab 1
+    pub stream: u32,
+    /// Zahl der Teilstroeme laut yt-dlp (2 = Bild und Ton getrennt)
+    pub streams: u32,
+    pub output_file: Option<String>,
+    pub note: Option<String>,
+    /// Alle Dateien, die yt-dlp in diesem Lauf schreibt -- fuer das Aufraeumen
+    /// nach einem Abbruch.
+    pub destinations: Vec<String>,
+    /// Titel aus den Metadaten; schlaegt den aus dem Dateinamen („Film.f137“)
+    info_title: Option<String>,
+    path_title: Option<String>,
+    format_id: Option<String>,
+}
+
+impl LineState {
+    /// Wertet eine Zeile aus; true, wenn sich etwas Sichtbares geaendert hat.
+    pub fn feed(&mut self, line: &str) -> bool {
+        if let Some(n) = parse_stream_count(line) {
+            self.streams = n;
+            return false;
+        }
+        if let Some(template) = parse_template_line(line) {
+            return self.apply_template(template);
+        }
+        // Die gewohnte Anzeige, falls die Vorlage einmal nicht greift
+        if let Some(p) = parse_progress(line) {
+            if let Some(v) = p.percent {
+                self.progress = self.progress.max(v);
+            }
+            self.speed = p.speed;
+            self.eta = p.eta;
+            return true;
+        }
+        if let Some(existing) = parse_existing(line) {
+            self.path_title = Some(title_from_path(&existing));
+            self.output_file = Some(existing);
+            self.note = Some(NOTE_EXISTING.into());
+            return true;
+        }
+        if let Some(dest) = parse_destination(line) {
+            self.path_title = Some(title_from_path(&dest));
+            self.output_file = Some(dest.clone());
+            self.destinations.push(dest);
+            return true;
+        }
+        false
+    }
+
+    fn apply_template(&mut self, line: TemplateLine) -> bool {
+        match line {
+            TemplateLine::Download(tick) => {
+                if tick.format_id.is_some() && tick.format_id != self.format_id {
+                    self.stream += 1;
+                    self.format_id = tick.format_id.clone();
+                }
+                let stream = self.stream.max(1);
+                let streams = self.streams.max(stream);
+                let fraction = match (tick.finished, tick.downloaded, tick.total) {
+                    (true, _, _) => 1.0,
+                    (false, Some(done), Some(total)) => (done / total).min(1.0),
+                    _ => 0.0,
+                };
+                // Gleiche Anteile je Teilstrom: Die Groesse des naechsten ist
+                // vorher nicht bekannt, und so laeuft der Balken nie zurueck.
+                let overall = (f64::from(stream - 1) + fraction) / f64::from(streams);
+                self.progress = self.progress.max(overall).min(0.999);
+                self.phase = Some(stream_phase(tick.vcodec.as_deref(), tick.acodec.as_deref()));
+                if tick.finished {
+                    self.speed = None;
+                    self.eta = None;
+                } else {
+                    self.speed = tick.speed.and_then(format_speed);
+                    self.eta = tick.eta.map(format_eta);
+                }
+                if tick.title.is_some() {
+                    self.info_title = tick.title;
+                }
+                true
+            }
+            TemplateLine::Post {
+                started: true,
+                name,
+            } => {
+                let phase = match name.as_str() {
+                    "Merger" => Phase::Merge,
+                    "ExtractAudio" => Phase::Convert,
+                    // Verschiebt nur fertige Dateien, auch wenn nichts geladen wurde
+                    "MoveFiles" => return false,
+                    _ => Phase::Finish,
+                };
+                self.phase = Some(phase);
+                self.progress = 0.999;
+                self.speed = None;
+                self.eta = None;
+                true
+            }
+            TemplateLine::Post { started: false, .. } => false,
+        }
+    }
+
+    /// Titel fuer die Anzeige: aus den Metadaten, sonst aus dem Dateinamen.
+    pub fn title(&self) -> Option<&str> {
+        self.info_title.as_deref().or(self.path_title.as_deref())
+    }
+
+    pub fn phase_label(&self) -> Option<String> {
+        self.phase.map(|p| p.label(self.stream, self.streams))
+    }
+
+    /// Uebertraegt den Stand in den Auftrag.
+    pub fn apply(&self, job: &mut Job) {
+        job.progress = self.progress;
+        job.speed = self.speed.clone();
+        job.eta = self.eta.clone();
+        job.phase = self.phase;
+        job.phase_label = self.phase_label();
+        if let Some(title) = self.title() {
+            job.title = Some(title.to_string());
+        }
+        if self.output_file.is_some() {
+            job.output_file = self.output_file.clone();
+        }
+        if self.note.is_some() {
+            job.note = self.note.clone();
+        }
+    }
 }
 
 /// Liest die Zieldatei aus den Meldungen von yt-dlp.
@@ -264,9 +588,15 @@ pub fn build_args(req: &EnqueueRequest, bin_dir: &Path, deno: Option<&Path>) -> 
         // kaemen als einzelnes Byte an, das kein UTF-8 ist.
         "--encoding".into(),
         "utf-8".into(),
+    ];
+    for template in PROGRESS_TEMPLATES {
+        args.push("--progress-template".into());
+        args.push(template.into());
+    }
+    args.extend([
         "--ffmpeg-location".into(),
         bin_dir.to_string_lossy().into_owned(),
-    ];
+    ]);
     match req.format {
         Format::Video => {
             let selector = match req.max_height {
@@ -305,6 +635,14 @@ pub fn build_args(req: &EnqueueRequest, bin_dir: &Path, deno: Option<&Path>) -> 
     args.push("--".into());
     args.push(req.url.clone());
     args
+}
+
+/// Nach dem Ende gibt es weder Tempo noch Phase.
+fn end_phase(job: &mut Job) {
+    job.speed = None;
+    job.eta = None;
+    job.phase = None;
+    job.phase_label = None;
 }
 
 fn now_ms() -> u64 {
@@ -388,6 +726,8 @@ impl Manager {
             output_file: None,
             error: None,
             note: None,
+            phase: None,
+            phase_label: None,
             created_at: now_ms(),
         };
         {
@@ -516,9 +856,7 @@ impl Manager {
             }
         }));
 
-        // Alle Dateien, die yt-dlp in diesem Lauf schreibt -- fuer das
-        // Aufraeumen nach einem Abbruch.
-        let mut destinations: Vec<String> = Vec::new();
+        let mut lines = LineState::default();
         let status = loop {
             tokio::select! {
                 _ = &mut cancel_rx => {
@@ -529,7 +867,7 @@ impl Manager {
                     let _ = child.kill().await;
                     break child.wait().await;
                 }
-                Some(line) = rx.recv() => destinations.extend(self.handle_line(id, &line)),
+                Some(line) = rx.recv() => self.feed(id, &mut lines, &line),
                 // `wait()` ist abbruchsicher und darf hier wiederholt werden.
                 res = child.wait() => break res,
             }
@@ -539,7 +877,7 @@ impl Manager {
         // wenn die lesende Aufgabe fertig ist -- also wenn kein Prozess des
         // Baums die Pipe mehr offen haelt.
         while let Some(line) = rx.recv().await {
-            destinations.extend(self.handle_line(id, &line));
+            self.feed(id, &mut lines, &line);
         }
 
         let canceled = {
@@ -553,7 +891,7 @@ impl Manager {
         };
         drop(tree);
         if canceled {
-            remove_leftovers(&destinations, &req.output_dir).await;
+            remove_leftovers(&lines.destinations, &req.output_dir).await;
             return;
         }
 
@@ -561,8 +899,7 @@ impl Manager {
             Ok(code) if code.success() => self.patch(id, |job| {
                 job.status = JobStatus::Done;
                 job.progress = 1.0;
-                job.speed = None;
-                job.eta = None;
+                end_phase(job);
             }),
             Ok(code) => {
                 let tail = err_tail.lock().unwrap().clone();
@@ -580,41 +917,22 @@ impl Manager {
                 self.patch(id, |job| {
                     job.status = JobStatus::Error;
                     job.error = Some(message.clone());
+                    end_phase(job);
                 });
             }
             Err(err) => self.patch(id, |job| {
                 job.status = JobStatus::Error;
                 job.error = Some(err.to_string());
+                end_phase(job);
             }),
         }
     }
 
-    /// Wertet eine Zeile aus; liefert die Zieldatei, wenn sie eine meldet.
-    fn handle_line(&self, id: &str, line: &str) -> Option<String> {
-        if let Some(progress) = parse_progress(line) {
-            self.patch(id, |job| {
-                if let Some(p) = progress.percent {
-                    job.progress = p;
-                }
-                job.speed = progress.speed;
-                job.eta = progress.eta;
-            });
+    /// Wertet eine Zeile aus und meldet, was sich sichtbar geaendert hat.
+    fn feed(&self, id: &str, lines: &mut LineState, line: &str) {
+        if lines.feed(line) {
+            self.patch(id, |job| lines.apply(job));
         }
-        if let Some(existing) = parse_existing(line) {
-            let title = title_from_path(&existing);
-            self.patch(id, |job| {
-                job.output_file = Some(existing.clone());
-                job.title = Some(title.clone());
-                job.note = Some(NOTE_EXISTING.into());
-            });
-        }
-        let dest = parse_destination(line)?;
-        let title = title_from_path(&dest);
-        self.patch(id, |job| {
-            job.output_file = Some(dest.clone());
-            job.title = Some(title.clone());
-        });
-        Some(dest)
     }
 
     pub fn cancel(&self, id: &str) {
@@ -630,8 +948,7 @@ impl Manager {
                 return;
             }
             job.status = JobStatus::Canceled;
-            job.speed = None;
-            job.eta = None;
+            end_phase(job);
             let copy = job.clone();
             let sender = guard.cancels.remove(id);
             let tree = guard.trees.get(id).cloned();
@@ -772,6 +1089,186 @@ mod tests {
             Some("/tmp/lied.mp3")
         );
         assert!(parse_destination("[download]  12.3% of 45.60MiB").is_none());
+    }
+
+    /// Echte Ausgabe von yt-dlp 2026.10.26 mit [`PROGRESS_TEMPLATES`]: lokaler
+    /// DASH-Strom, Bild und Ton getrennt wie bei YouTube (8.11.2026, gekuerzt).
+    const DASH: &str = "\
+[info] manifest: Downloading 1 format(s): 0+1
+[dashsegments] Total fragments: 3
+[download] Destination: C:\\z\\manifest.f0.mp4
+[mvl]dl\tdownloading\t837\tNA\t2511.0\t0\tNA\t0\tavc1.f4001e\tnone\tmanifest
+[mvl]dl\tdownloading\t395836\tNA\t985434.0\t0\tNA\t0\tavc1.f4001e\tnone\tmanifest
+[mvl]dl\tdownloading\t460348\tNA\t523205.0\t2722003.772072765\tNA\t0\tavc1.f4001e\tnone\tmanifest
+[mvl]dl\tfinished\t491461\t491461\tNA\t8014497.759122243\tNA\t0\tavc1.f4001e\tnone\tmanifest
+[dashsegments] Total fragments: 7
+[download] Destination: C:\\z\\manifest.f1.m4a
+[mvl]dl\tdownloading\t765\tNA\t5355.0\t0\tNA\t1\tnone\tmp4a.40.2\tmanifest
+[mvl]dl\tdownloading\t54858\tNA\t122881.5\t222514.0059120526\t3\t1\tnone\tmp4a.40.2\tmanifest
+[mvl]dl\tfinished\t108308\t108308\tNA\t883284.356396217\tNA\t1\tnone\tmp4a.40.2\tmanifest
+[mvl]pp\tstarted\tMerger
+[Merger] Merging formats into \"C:\\z\\manifest.mp4\"
+[mvl]pp\tfinished\tMerger
+Deleting original file C:\\z\\manifest.f1.m4a (pass -k to keep)
+[mvl]pp\tstarted\tMoveFiles
+[mvl]pp\tfinished\tMoveFiles";
+
+    /// Verfolgt einen Lauf und haelt nach jeder Zeile (Fortschritt, Text) fest.
+    fn verfolge(text: &str) -> (LineState, Vec<(f64, Option<String>)>) {
+        let mut state = LineState::default();
+        let mut seen = Vec::new();
+        for line in text.lines() {
+            if state.feed(line) {
+                seen.push((state.progress, state.phase_label()));
+            }
+        }
+        (state, seen)
+    }
+
+    #[test]
+    fn vorlage_liest_rohwerte() {
+        let Some(TemplateLine::Download(t)) = parse_template_line(
+            "[mvl]dl\tdownloading\t460348\tNA\t523205.0\t2722003.77\t12\t0\tavc1.f4001e\tnone\tMein\tTitel",
+        ) else {
+            panic!("keine Fortschrittszeile");
+        };
+        assert!(!t.finished);
+        assert_eq!(t.downloaded, Some(460348.0));
+        assert_eq!(
+            t.total,
+            Some(523205.0),
+            "Schaetzung, wenn die Groesse fehlt"
+        );
+        assert_eq!(t.eta, Some(12));
+        assert_eq!(t.format_id.as_deref(), Some("0"));
+        assert_eq!(t.acodec.as_deref(), Some("none"));
+        assert_eq!(
+            t.title.as_deref(),
+            Some("Mein\tTitel"),
+            "Tabulator im Titel"
+        );
+
+        assert_eq!(
+            parse_template_line("[mvl]pp\tstarted\tExtractAudio"),
+            Some(TemplateLine::Post {
+                started: true,
+                name: "ExtractAudio".into()
+            })
+        );
+        assert!(parse_template_line("[mvl]dl\tzu\twenig").is_none());
+        assert!(parse_template_line("[download] Destination: x").is_none());
+    }
+
+    #[test]
+    fn vorlagen_stehen_in_den_argumenten() {
+        let args = build_args(&req(Format::Video, None), Path::new("/bin"), None);
+        let templates: Vec<&String> = args
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i > 0 && args[i - 1] == "--progress-template")
+            .map(|(_, a)| a)
+            .collect();
+        assert_eq!(templates, PROGRESS_TEMPLATES);
+        assert!(PROGRESS_TEMPLATES[0].contains("\t%(info.title)s"));
+        assert!(
+            !PROGRESS_TEMPLATES[0].contains("  "),
+            "Fortsetzung ohne Leerraum"
+        );
+    }
+
+    #[test]
+    fn teilstroeme_aus_der_formatzeile() {
+        assert_eq!(
+            parse_stream_count("[info] abc: Downloading 1 format(s): 137+140"),
+            Some(2)
+        );
+        assert_eq!(
+            parse_stream_count("[info] clip: Downloading 1 format(s): mp4"),
+            Some(1)
+        );
+        assert!(parse_stream_count("[info] abc: Downloading webpage").is_none());
+    }
+
+    #[test]
+    fn tempo_und_restzeit_auf_deutsch() {
+        assert_eq!(format_speed(2_722_003.8).as_deref(), Some("2,7 MB/s"));
+        assert_eq!(format_speed(222_514.0).as_deref(), Some("223 kB/s"));
+        assert_eq!(format_speed(950.0).as_deref(), Some("950 B/s"));
+        assert_eq!(format_speed(0.0), None);
+        assert_eq!(format_eta(42), "0:42");
+        assert_eq!(format_eta(605), "10:05");
+        assert_eq!(format_eta(3723), "1:02:03");
+    }
+
+    #[test]
+    fn bild_und_ton_nacheinander_dann_zusammenfuegen() {
+        let (state, seen) = verfolge(DASH);
+        let labels: Vec<&str> = seen.iter().filter_map(|(_, l)| l.as_deref()).collect();
+        assert!(labels.contains(&"Video 1/2"), "{labels:?}");
+        assert!(labels.contains(&"Ton 2/2"), "{labels:?}");
+        assert_eq!(labels.last(), Some(&"Zusammenfügen…"));
+
+        // Der Balken laeuft nie zurueck: Video fuellt die erste Haelfte
+        let progress: Vec<f64> = seen.iter().map(|(p, _)| *p).collect();
+        assert!(progress.windows(2).all(|w| w[1] >= w[0]), "{progress:?}");
+        let video_fertig = seen
+            .iter()
+            .position(|(_, l)| l.as_deref() == Some("Ton 2/2"))
+            .unwrap();
+        assert!((seen[video_fertig - 2].0 - 0.5).abs() < 1e-9);
+        assert_eq!(state.progress, 0.999);
+
+        assert_eq!(state.title(), Some("manifest"), "nicht „manifest.f1“");
+        assert_eq!(state.output_file.as_deref(), Some("C:\\z\\manifest.mp4"));
+        assert_eq!(
+            state.destinations,
+            [
+                "C:\\z\\manifest.f0.mp4",
+                "C:\\z\\manifest.f1.m4a",
+                "C:\\z\\manifest.mp4"
+            ]
+        );
+        assert_eq!(state.speed, None, "nach dem Laden kein Tempo mehr");
+    }
+
+    #[test]
+    fn ton_wird_umgewandelt() {
+        let (state, seen) = verfolge(
+            "[info] clip: Downloading 1 format(s): mp4\n\
+             [download] Destination: C:\\z\\clip.mp4\n\
+             [mvl]dl\tdownloading\t261120\t603385\tNA\t37462516.17\t0\tmp4\tNA\tNA\tclip\n\
+             [mvl]dl\tfinished\t603385\t603385\tNA\t24979076.5\tNA\tmp4\tNA\tNA\tclip\n\
+             [mvl]pp\tstarted\tExtractAudio\n\
+             [ExtractAudio] Destination: C:\\z\\clip.mp3\n\
+             [mvl]pp\tfinished\tExtractAudio",
+        );
+        // Ohne Codec-Angabe (einfache Datei) nur „lädt“, ohne Zaehler
+        assert_eq!(seen[1].1.as_deref(), Some("lädt"));
+        assert_eq!(seen[1].0, 261120.0 / 603385.0);
+        assert_eq!(state.phase, Some(Phase::Convert));
+        assert_eq!(state.phase_label().as_deref(), Some("Umwandeln…"));
+        assert!(state.phase.unwrap().is_post());
+        assert_eq!(state.output_file.as_deref(), Some("C:\\z\\clip.mp3"));
+    }
+
+    #[test]
+    fn schon_da_ohne_phase() {
+        let (state, _) = verfolge(
+            "[info] manifest: Downloading 1 format(s): 0+1\n\
+             [download] C:\\z\\manifest.mp4 has already been downloaded\n\
+             [mvl]pp\tstarted\tMoveFiles\n\
+             [mvl]pp\tfinished\tMoveFiles",
+        );
+        assert_eq!(state.phase, None, "MoveFiles ist keine sichtbare Phase");
+        assert_eq!(state.title(), Some("manifest"));
+        assert_eq!(state.note.as_deref(), Some(NOTE_EXISTING));
+    }
+
+    #[test]
+    fn gewohnte_anzeige_als_rueckfall() {
+        let (state, _) = verfolge("[download]  40.8% of 75.94KiB at 18.59MiB/s ETA 00:00");
+        assert!((state.progress - 0.408).abs() < 1e-9);
+        assert_eq!(state.speed.as_deref(), Some("18.59MiB/s"));
     }
 
     #[test]

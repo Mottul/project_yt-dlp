@@ -123,6 +123,17 @@ der App, dazu ein kleiner Node-Server im Scratchpad:
 
 - `/probe.mp4` liefert die Datei → zweimal laden zeigt „has already been downloaded“.
 - `/slow.mp4` meldet 50 MB und schreibt alle 100 ms 4 KB → yt-dlp steckt mitten im Download.
+- **Bild und Ton getrennt wie bei YouTube** (Phasen, Zusammenfügen): daraus einen DASH-Strom
+  machen und `/dash/manifest.mpd` mit `Content-Type: application/dash+xml` ausliefern –
+  yt-dlp wählt dann `0+1`, lädt beide nacheinander und fügt sie zusammen:
+  ```bash
+  "$B/ffmpeg.exe" -i www/clip.mp4 -map 0:v -map 0:a -c copy -f dash -seg_duration 2 www/dash/manifest.mpd
+  ```
+  Mit `-x --audio-format mp3` auf `/clip.mp4` kommt die Phase „Umwandeln“.
+
+Die Rohzeilen der Fortschrittsvorlage (`queue::PROGRESS_TEMPLATES`) direkt ansehen: yt-dlp mit
+denselben `--progress-template`-Argumenten starten und `| cat -A` anhängen – Tabulatoren
+erscheinen als `^I`. Felder ohne Wert heißen `NA`.
 
 Abbruch prüfen im Starter: Fortschritt > 0 abwarten, `m.cancel(&id)`, dann `m.busy()` beobachten.
 **Der Platz wird erst frei, wenn kein Prozess die Pipe mehr hält.** Bleibt `busy()` wahr, läuft

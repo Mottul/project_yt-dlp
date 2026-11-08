@@ -6,6 +6,7 @@
 
 use std::io::{IsTerminal, Write};
 
+use mottul_video_core::queue::Phase;
 use mottul_video_core::{Job, JobStatus};
 
 pub const RESET: &str = "\x1b[0m";
@@ -40,11 +41,20 @@ pub fn bar(progress: f64, width: usize) -> String {
 /// Eine Zeile je Auftrag: Titel, Balken, Tempo, Restzeit.
 pub fn job_line(job: &Job, width: usize) -> String {
     let title = job.title.clone().unwrap_or_else(|| shorten_url(&job.url));
-    let percent = format!("{:>3} %", (job.progress * 100.0).round() as u32);
+    // Abgeschnitten: 99,9 % ist noch nicht fertig (fertig meldet erst der Prozess)
+    let percent = format!("{:>3} %", (job.progress * 100.0).floor() as u32);
     let detail = match job.status {
         JobStatus::Queued => "wartet".to_string(),
         JobStatus::Running => {
             let mut parts = Vec::new();
+            // „lädt“ sagt der Balken schon; Video/Ton/Zusammenfügen nicht
+            if let Some(label) = job
+                .phase_label
+                .as_ref()
+                .filter(|_| job.phase != Some(Phase::Download))
+            {
+                parts.push(label.clone());
+            }
             if let Some(speed) = &job.speed {
                 parts.push(speed.clone());
             }

@@ -13,6 +13,8 @@ ersten Start unter Windows und macOS.
 - Warteschlange mit zwei gleichzeitigen Downloads, Fortschritt, Tempo,
   Restzeit, Abbrechen. Abbrechen beendet yt-dlp samt ffmpeg und räumt halb
   geladene Dateien weg; liegt eine Datei schon im Zielordner, steht das dabei
+- Fortschritt mit Phase: Liegen Bild und Ton getrennt vor (YouTube), steht
+  „Video 1/2“, „Ton 2/2“, danach „Zusammenfügen…“ bzw. „Umwandeln…“
 - Zielordner zu Beginn: „Downloads“ (änderbar)
 - Video als MP4 (Auflösung deckelbar) oder nur Ton als MP3/M4A
 - **yt-dlp bleibt aktuell:** beim Start wird die neueste stabile Version
@@ -70,6 +72,7 @@ npm run app:dev        # Fenster mit Hot Reload
 npm run app:build      # Paket für das aktuelle System
 
 npm run build          # Oberfläche: Typen + Bundle
+npm run dev            # nur die Oberfläche im Browser, mit Beispieldaten
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all

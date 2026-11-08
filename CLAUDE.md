@@ -30,11 +30,18 @@ Skill `.claude/skills/fehler-nachstellen/`.
 Offene Punkte stehen in `ROADMAP.md`: Erledigtes streichen, Neues mit Grund
 und Stelle eintragen.
 
-Wiederkehrende Abläufe als Projekt-Skills in `.claude/skills/`
-(`fehler-nachstellen`). Jede Änderung zieht sie mit: neue Fehlerbilder, Muster,
-Lehren.
+Wiederkehrende Abläufe als Projekt-Skills in `.claude/skills/`. Jede Änderung
+zieht sie mit: neue Fehlerbilder, Muster, Lehren.
 
-Die CI (`.github/workflows/ci.yml`) nimmt das jeweils neueste stabile Rust: Ein
+- `fehler-nachstellen` – Fehler mit den Werkzeugen der App nachstellen, lokaler
+  Testserver (auch DASH mit getrenntem Bild und Ton), Gegenprobe
+- `oberflaeche-pruefen` – Oberfläche im Browser mit Beispieldaten (`src/demo.ts`,
+  greift nur bei `npm run dev` außerhalb von Tauri) oder im echten Fenster
+- `veroeffentlichen` – Version anheben, Release-Workflow, Entwurf prüfen, Notizen,
+  veröffentlichen
+
+Die CI (`.github/workflows/ci.yml`) prüft Rust auf Linux, Windows und macOS,
+die Oberfläche nur auf Linux. Sie nimmt das jeweils neueste stabile Rust: Ein
 neues rustfmt kann alte Stellen anders umbrechen und `cargo fmt --check` rot
 machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen.
 
@@ -91,6 +98,12 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
   und yt-dlp scheitert unter Windows mit „Unable to download video: [Errno 22]
   Invalid argument“ – ohne `--encoding` schreibt es in cp1252 (ARTE-Titel mit
   geschütztem Leerzeichen, 7.11.2026).
+- **Fortschritt** über `queue::PROGRESS_TEMPLATES` (`--progress-template`:
+  Rohwerte, Tab-getrennt, Codecs zeigen Bild/Ton) und `queue::LineState`, nicht
+  über die Anzeige für Menschen – die wechselt Felder je nach Lage. `LineState`
+  ist rein und wird mit echten, aufgezeichneten Zeilen getestet; neue Zeilenarten
+  ebenso. Texte der Phasen formuliert der Kern (`Phase::label`), nicht die
+  Oberflächen. Die gewohnte Zeile `[download] x%` bleibt als Rückfall.
 - **Einstellungen** (`Settings` in `src-tauri` und `cli`, eine gemeinsame Datei)
   tragen `#[serde(default)]` am Struct: Ein neues Feld darf eine ältere Datei nie
   verwerfen (sonst ist der Zielordner weg). Neue Felder in BEIDEN Structs

@@ -1,25 +1,72 @@
 name: Release
 
 # Baut die Installer für Windows und macOS.
-#   - Tag v*                      -> Installer an einen Release-Entwurf hängen
-#   - manuell mit Version          -> dasselbe, der Tag wird dabei angelegt
-#   - manuell ohne Version         -> nur bauen, Ergebnisse als Artefakt
+# Die Version steht nur in Cargo.toml ([workspace.package]); der Tag wird
+# daraus abgeleitet, damit Release, Installer-Namen und App dieselbe Nummer
+# tragen.
+#   - Tag v*                      -> muss zur Version passen; Installer an
+#                                    einen Release-Entwurf hängen
+#   - manuell, „veröffentlichen“  -> dasselbe mit Tag v<Version>; der Tag
+#                                    entsteht beim Veröffentlichen des Entwurfs
+#   - manuell ohne Haken          -> nur bauen, Ergebnisse als Artefakt
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Zu veröffentlichende Version, z. B. v0.1.0 (leer = nur bauen)'
+      veroeffentlichen:
+        description: 'Als Release-Entwurf veröffentlichen (Tag = v + Version aus Cargo.toml)'
+        type: boolean
         required: false
-        default: ''
+        default: false
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag aus Cargo.toml ableiten und prüfen
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH: ${{ inputs.veroeffentlichen }}
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "mottul-video-loader") | .version')
+          test -n "$version" || { echo "::error::Keine Version in Cargo.toml gefunden"; exit 1; }
+          wanted="v$version"
+          if [ "$REF_TYPE" = tag ]; then
+            # Ein gepushter Tag mit anderer Nummer ergäbe einen Release, dessen
+            # Installer und App eine andere Version melden.
+            test "$REF_NAME" = "$wanted" || {
+              echo "::error::Tag $REF_NAME passt nicht zur Version $version in Cargo.toml"; exit 1; }
+            tag=$wanted
+          elif [ "$PUBLISH" = true ]; then
+            # Gibt es den Release schon (auch als Entwurf), wurde das Anheben
+            # vergessen -- sonst entstünde ein zweiter Entwurf derselben Nummer.
+            if gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 \
+                 --json tagName --jq '.[].tagName' | grep -qx "$wanted"; then
+              echo "::error::Release $wanted gibt es schon – erst die Version in Cargo.toml anheben"
+              exit 1
+            fi
+            tag=$wanted
+          else
+            tag=''
+          fi
+          echo "Version $version · Tag ${tag:-(nur bauen)}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -63,8 +110,8 @@ jobs:
         with:
           args: ${{ matrix.args }}
           # Leerer Tag = nur bauen, nichts veröffentlichen.
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          releaseName: MottulVideoLoader ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          tagName: ${{ needs.version.outputs.tag }}
+          releaseName: MottulVideoLoader ${{ needs.version.outputs.tag }}
           releaseBody: |
             Installation und erster Start: siehe `docs/INSTALL.md`.
 
@@ -109,11 +156,11 @@ jobs:
           lipo -info "$bin"
 
       - name: Terminal-Variante an den Release hängen
-        if: matrix.platform == 'macos-latest' && (github.ref_type == 'tag' || inputs.tag != '')
+        if: matrix.platform == 'macos-latest' && needs.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}" \
+          gh release upload "${{ needs.version.outputs.tag }}" \
             MottulVideoLoader-Terminal-macos.zip --clobber
 
       # Auch bei einer Veröffentlichung nützlich: die Ergebnisse liegen dann

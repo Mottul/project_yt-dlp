@@ -82,6 +82,11 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
   nachsichtig lesen (`auth::lenient_browser`).
 - **Version ermitteln** über die Weiterleitung von `/releases/latest`, nie über
   die GitHub-API (ohne Anmeldung 60 Anfragen je Stunde und IP).
+- **Eigene Version** nur in `Cargo.toml` (`[workspace.package]`). Tauri liest
+  sie von dort, der Release-Workflow leitet den Tag daraus ab und bricht ab,
+  wenn es den Release schon gibt. Keine `version` in `tauri.conf.json` oder
+  `package.json` eintragen – zwei Stellen laufen auseinander (0.1.1 stand im
+  Lockfile noch als 0.1.0).
 
 ## Konventionen
 

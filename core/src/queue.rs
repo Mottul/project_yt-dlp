@@ -62,6 +62,13 @@ pub enum JobStatus {
     Canceled,
 }
 
+impl JobStatus {
+    /// Wartet oder laeuft noch.
+    pub fn is_open(self) -> bool {
+        matches!(self, JobStatus::Queued | JobStatus::Running)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
@@ -93,6 +100,10 @@ pub struct Job {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Phase {
+    /// yt-dlp fragt die Seite ab, vor der ersten Zieldatei. Das dauert einige
+    /// Sekunden, und Titel wie Groesse stehen erst danach fest -- ohne Phase
+    /// stand dabei nur die Adresse da, bei 0 %.
+    Prepare,
     /// Datei mit Bild und Ton, oder der Inhalt ist nicht bekannt
     Download,
     Video,
@@ -112,6 +123,7 @@ impl Phase {
             String::new()
         };
         match self {
+            Phase::Prepare => "Abfragen…".into(),
             Phase::Download => "lädt".into(),
             Phase::Video => format!("Video{count}"),
             Phase::Audio => format!("Ton{count}"),
@@ -124,6 +136,11 @@ impl Phase {
     /// Nacharbeit: kein messbarer Fortschritt mehr.
     pub fn is_post(self) -> bool {
         matches!(self, Phase::Merge | Phase::Convert | Phase::Finish)
+    }
+
+    /// Ohne messbaren Fortschritt: vor dem Laden und bei der Nacharbeit.
+    pub fn is_indeterminate(self) -> bool {
+        self == Phase::Prepare || self.is_post()
     }
 }
 
@@ -324,6 +341,7 @@ pub struct LineState {
     pub progress: f64,
     pub speed: Option<String>,
     pub eta: Option<String>,
+    /// None: noch nichts geladen, yt-dlp fragt die Seite ab ([`Phase::Prepare`]).
     pub phase: Option<Phase>,
     /// laufender Teilstrom, ab 1
     pub stream: u32,
@@ -357,6 +375,8 @@ impl LineState {
             }
             self.speed = p.speed;
             self.eta = p.eta;
+            // Sonst stuende beim Rueckfall bis zum Ende „Abfragen…“ da
+            self.phase.get_or_insert(Phase::Download);
             return true;
         }
         if let Some(existing) = parse_existing(line) {
@@ -431,8 +451,13 @@ impl LineState {
         self.info_title.as_deref().or(self.path_title.as_deref())
     }
 
-    pub fn phase_label(&self) -> Option<String> {
-        self.phase.map(|p| p.label(self.stream, self.streams))
+    /// Was gerade geschieht; vor dem ersten Fortschritt die Abfrage der Seite.
+    pub fn shown_phase(&self) -> Phase {
+        self.phase.unwrap_or(Phase::Prepare)
+    }
+
+    pub fn phase_label(&self) -> String {
+        self.shown_phase().label(self.stream, self.streams)
     }
 
     /// Uebertraegt den Stand in den Auftrag.
@@ -440,8 +465,8 @@ impl LineState {
         job.progress = self.progress;
         job.speed = self.speed.clone();
         job.eta = self.eta.clone();
-        job.phase = self.phase;
-        job.phase_label = self.phase_label();
+        job.phase = Some(self.shown_phase());
+        job.phase_label = Some(self.phase_label());
         if let Some(title) = self.title() {
             job.title = Some(title.to_string());
         }
@@ -576,6 +601,38 @@ pub fn title_from_path(path: &str) -> String {
         Some(i) if i > 0 => name[..i].to_string(),
         _ => name.to_string(),
     }
+}
+
+/// Zerlegt eingefuegten oder ins Fenster gezogenen Text in Adressen: eine je
+/// Zeile oder durch Leerraum getrennt.
+///
+/// Ein einzelnes Wort bleibt, wie es ist -- yt-dlp versteht auch Formen ohne
+/// `https://`, und so verhielt sich das Feld bisher. Bei mehreren zaehlen nur
+/// Woerter, die wie eine Webadresse aussehen: Aus „Schau mal: https://…“ wird
+/// kein Auftrag „Schau“, aus einer gezogenen Link-Liste (`text/uri-list`)
+/// keiner fuer die Kommentarzeilen. Doppelte fallen weg, die Reihenfolge bleibt.
+pub fn split_addresses(text: &str) -> Vec<String> {
+    let words: Vec<&str> = text
+        .split_whitespace()
+        .map(|w| {
+            w.trim_start_matches(['"', '\'', '<'])
+                .trim_end_matches(['"', '\'', '>', ',', ';'])
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+    let single = words.len() == 1;
+    let mut out: Vec<String> = Vec::new();
+    for word in words {
+        if (single || looks_like_web_address(word)) && !out.iter().any(|o| o == word) {
+            out.push(word.to_string());
+        }
+    }
+    out
+}
+
+fn looks_like_web_address(word: &str) -> bool {
+    let lower = word.to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("www.")
 }
 
 /// Baut die Aufrufparameter fuer yt-dlp. `deno`: die eigene JavaScript-Laufzeit,
@@ -762,6 +819,9 @@ impl Manager {
                     return;
                 };
                 job.status = JobStatus::Running;
+                // Bis zur ersten Zeile, die etwas zeigt, fragt yt-dlp die Seite ab
+                job.phase = Some(Phase::Prepare);
+                job.phase_label = Some(Phase::Prepare.label(0, 0));
                 let id = job.id.clone();
                 let copy = job.clone();
                 guard.active += 1;
@@ -792,6 +852,7 @@ impl Manager {
             self.patch(id, |job| {
                 job.status = JobStatus::Error;
                 job.error = Some("yt-dlp fehlt — bitte zuerst die Werkzeuge einrichten.".into());
+                end_phase(job);
             });
             return;
         };
@@ -814,6 +875,7 @@ impl Manager {
                 self.patch(id, |job| {
                     job.status = JobStatus::Error;
                     job.error = Some(format!("Start fehlgeschlagen: {err}"));
+                    end_phase(job);
                 });
                 return;
             }
@@ -1012,7 +1074,7 @@ impl Manager {
             .unwrap()
             .jobs
             .iter()
-            .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running))
+            .filter(|j| j.status.is_open())
             .map(|j| j.id.clone())
             .collect();
         for id in &open {
@@ -1029,7 +1091,7 @@ impl Manager {
         let keep: Vec<String> = guard
             .jobs
             .iter()
-            .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running))
+            .filter(|j| j.status.is_open())
             .map(|j| j.id.clone())
             .collect();
         guard.jobs.retain(|j| keep.contains(&j.id));
@@ -1156,7 +1218,7 @@ Deleting original file C:\\z\\manifest.f1.m4a (pass -k to keep)
 [mvl]pp\tfinished\tMoveFiles";
 
     /// Verfolgt einen Lauf und haelt nach jeder Zeile (Fortschritt, Text) fest.
-    fn verfolge(text: &str) -> (LineState, Vec<(f64, Option<String>)>) {
+    fn verfolge(text: &str) -> (LineState, Vec<(f64, String)>) {
         let mut state = LineState::default();
         let mut seen = Vec::new();
         for line in text.lines() {
@@ -1245,7 +1307,9 @@ Deleting original file C:\\z\\manifest.f1.m4a (pass -k to keep)
     #[test]
     fn bild_und_ton_nacheinander_dann_zusammenfuegen() {
         let (state, seen) = verfolge(DASH);
-        let labels: Vec<&str> = seen.iter().filter_map(|(_, l)| l.as_deref()).collect();
+        let labels: Vec<&str> = seen.iter().map(|(_, l)| l.as_str()).collect();
+        // Die Zieldatei steht vor dem ersten Fortschritt
+        assert_eq!(labels.first(), Some(&"Abfragen…"));
         assert!(labels.contains(&"Video 1/2"), "{labels:?}");
         assert!(labels.contains(&"Ton 2/2"), "{labels:?}");
         assert_eq!(labels.last(), Some(&"Zusammenfügen…"));
@@ -1253,10 +1317,7 @@ Deleting original file C:\\z\\manifest.f1.m4a (pass -k to keep)
         // Der Balken laeuft nie zurueck: Video fuellt die erste Haelfte
         let progress: Vec<f64> = seen.iter().map(|(p, _)| *p).collect();
         assert!(progress.windows(2).all(|w| w[1] >= w[0]), "{progress:?}");
-        let video_fertig = seen
-            .iter()
-            .position(|(_, l)| l.as_deref() == Some("Ton 2/2"))
-            .unwrap();
+        let video_fertig = seen.iter().position(|(_, l)| l == "Ton 2/2").unwrap();
         assert!((seen[video_fertig - 2].0 - 0.5).abs() < 1e-9);
         assert_eq!(state.progress, 0.999);
 
@@ -1285,11 +1346,13 @@ Deleting original file C:\\z\\manifest.f1.m4a (pass -k to keep)
              [mvl]pp\tfinished\tExtractAudio",
         );
         // Ohne Codec-Angabe (einfache Datei) nur „lädt“, ohne Zaehler
-        assert_eq!(seen[1].1.as_deref(), Some("lädt"));
+        assert_eq!(seen[1].1, "lädt");
         assert_eq!(seen[1].0, 261120.0 / 603385.0);
         assert_eq!(state.phase, Some(Phase::Convert));
-        assert_eq!(state.phase_label().as_deref(), Some("Umwandeln…"));
+        assert_eq!(state.phase_label(), "Umwandeln…");
         assert!(state.phase.unwrap().is_post());
+        assert!(state.phase.unwrap().is_indeterminate());
+        assert!(!Phase::Download.is_indeterminate());
         assert_eq!(state.output_file.as_deref(), Some("C:\\z\\clip.mp3"));
     }
 
@@ -1307,10 +1370,79 @@ Deleting original file C:\\z\\manifest.f1.m4a (pass -k to keep)
     }
 
     #[test]
+    fn vor_dem_ersten_fortschritt_wird_abgefragt() {
+        let mut state = LineState::default();
+        // Was yt-dlp waehrend der Abfrage schreibt, aendert nichts Sichtbares
+        for line in [
+            "[youtube] Extracting URL: https://www.youtube.com/watch?v=abc",
+            "[youtube] abc: Downloading webpage",
+            "[info] abc: Downloading 1 format(s): 137+140",
+        ] {
+            assert!(!state.feed(line), "{line}");
+        }
+        let mut job = Job {
+            id: "1".into(),
+            url: "u".into(),
+            format: Format::Video,
+            status: JobStatus::Running,
+            progress: 0.0,
+            title: None,
+            speed: None,
+            eta: None,
+            output_dir: "z".into(),
+            output_file: None,
+            error: None,
+            note: None,
+            phase: None,
+            phase_label: None,
+            created_at: 0,
+        };
+        assert!(state.feed("[download] Destination: C:\\z\\Film.f137.mp4"));
+        state.apply(&mut job);
+        assert_eq!(job.phase, Some(Phase::Prepare));
+        assert_eq!(job.phase_label.as_deref(), Some("Abfragen…"));
+        assert!(Phase::Prepare.is_indeterminate());
+        assert!(!Phase::Prepare.is_post());
+    }
+
+    #[test]
     fn gewohnte_anzeige_als_rueckfall() {
         let (state, _) = verfolge("[download]  40.8% of 75.94KiB at 18.59MiB/s ETA 00:00");
         assert!((state.progress - 0.408).abs() < 1e-9);
         assert_eq!(state.speed.as_deref(), Some("18.59MiB/s"));
+        // Laedt -- nicht mehr „Abfragen…“
+        assert_eq!(state.shown_phase(), Phase::Download);
+    }
+
+    #[test]
+    fn mehrere_adressen_aus_einem_text() {
+        assert_eq!(
+            split_addresses("https://a.example/1\nhttps://b.example/2\r\n\nhttps://a.example/1"),
+            ["https://a.example/1", "https://b.example/2"],
+            "eine je Zeile, Doppelte weg"
+        );
+        assert_eq!(
+            split_addresses("  https://a.example/1   www.b.example/2  "),
+            ["https://a.example/1", "www.b.example/2"]
+        );
+        // Aus einer Nachricht nur die Adressen
+        assert_eq!(
+            split_addresses("Schau mal: <https://a.example/1>, und \"HTTPS://b.example/2\";"),
+            ["https://a.example/1", "HTTPS://b.example/2"]
+        );
+        // Gezogene Link-Liste mit Kommentarzeile
+        assert_eq!(
+            split_addresses("# Titel der Seite\r\nhttps://a.example/1\r\n"),
+            ["https://a.example/1"]
+        );
+    }
+
+    #[test]
+    fn eine_eingabe_bleibt_wie_sie_ist() {
+        assert_eq!(split_addresses("  dQw4w9WgXcQ \n"), ["dQw4w9WgXcQ"]);
+        assert_eq!(split_addresses("-x"), ["-x"], "die Adresse steht hinter --");
+        assert!(split_addresses(" \n\t ").is_empty());
+        assert!(split_addresses("nur ein paar woerter").is_empty());
     }
 
     #[test]

@@ -14,3 +14,5 @@ path = "src/main.rs"
 mottul-video-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Strg+C abfangen, um vor dem Ende aufzuraeumen
+tokio = { workspace = true, features = ["signal"] }

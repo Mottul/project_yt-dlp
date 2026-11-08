@@ -7,12 +7,50 @@
 mod settings;
 mod ui;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use core::{paths, CookieBrowser, EnqueueRequest, Format, Job, JobSink, JobStatus, Manager};
 use mottul_video_core as core;
 use settings::Settings;
 use ui::{paint, BOLD, DIM, GOLD, GREEN, RED};
+
+/// Gesetzt, sobald Strg+C gedrueckt wurde. Dann raeumt der Handler auf und
+/// beendet das Programm; der Hauptfaden zeichnet nichts mehr dazwischen.
+static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// Strg+C: laufende Downloads samt Unterprozessen beenden und ihre halben
+/// Dateien wegraeumen, wie beim Schliessen des Fensters. Ohne das blieben
+/// `.part`-Dateien liegen, und unter macOS luede yt-dlp weiter.
+fn stop_on_ctrl_c(manager: &Manager) {
+    let manager = manager.clone();
+    manager.handle().spawn(async move {
+        if tokio::signal::ctrl_c().await.is_err() {
+            return;
+        }
+        STOPPING.store(true, Ordering::SeqCst);
+        // `shutdown` wartet blockierend; die Laeufe brauchen derweil die Laufzeit
+        let busy = manager.busy();
+        let worker = manager.clone();
+        let _ = tokio::task::spawn_blocking(move || worker.shutdown(Duration::from_secs(3))).await;
+        println!();
+        if busy {
+            println!(
+                "  {}",
+                paint(DIM, "Abgebrochen – halb geladene Dateien sind weggeräumt.")
+            );
+        }
+        std::process::exit(130);
+    });
+}
+
+/// Haelt den Hauptfaden an, bis der Handler fuer Strg+C das Programm beendet.
+fn halt_if_stopping() {
+    while STOPPING.load(Ordering::SeqCst) {
+        std::thread::park_timeout(Duration::from_secs(1));
+    }
+}
 
 /// Sammelt die Meldungen der Warteschlange und weckt den Hauptfaden, sobald
 /// sich etwas getan hat.
@@ -80,6 +118,7 @@ fn main() {
         }
     };
     let runtime = manager.handle();
+    stop_on_ctrl_c(&manager);
 
     println!();
     println!("  {}", paint(BOLD, "MottulVideoLoader"));
@@ -158,8 +197,13 @@ fn main() {
             "o" | "O" => choose_folder(&mut config, &data_dir),
             "n" | "N" => choose_cookies(&mut config, &data_dir),
             _ => {
-                let urls: Vec<String> = trimmed.split_whitespace().map(str::to_string).collect();
-                run_jobs(&manager, &screen, &bin_dir, &config, &urls);
+                // Wie im Fenster: mehrere Adressen auf einmal, Text drumherum faellt weg
+                let urls = core::queue::split_addresses(trimmed);
+                if urls.is_empty() {
+                    println!("  {}", paint(RED, "Keine Adresse gefunden."));
+                } else {
+                    run_jobs(&manager, &screen, &bin_dir, &config, &urls);
+                }
             }
         }
     }
@@ -248,6 +292,7 @@ fn run_jobs(
     let width = ui::terminal_width();
     let mut block = ui::Block::new();
     loop {
+        halt_if_stopping();
         let jobs = screen.take();
         block.draw(
             &jobs
@@ -266,6 +311,7 @@ fn run_jobs(
             .unwrap();
     }
     block.keep();
+    halt_if_stopping();
 
     for job in screen.take() {
         match job.status {

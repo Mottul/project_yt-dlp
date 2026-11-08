@@ -10,11 +10,16 @@ ersten Start unter Windows und macOS.
 
 ## Was die App macht
 
+- Mehrere Adressen auf einmal: eine Liste einfügen (eine je Zeile, Text
+  drumherum fällt weg) oder Links aus dem Browser ins Fenster ziehen
 - Warteschlange mit zwei gleichzeitigen Downloads, Fortschritt, Tempo,
   Restzeit, Abbrechen. Abbrechen beendet yt-dlp samt ffmpeg und räumt halb
   geladene Dateien weg; liegt eine Datei schon im Zielordner, steht das dabei
-- Fortschritt mit Phase: Liegen Bild und Ton getrennt vor (YouTube), steht
-  „Video 1/2“, „Ton 2/2“, danach „Zusammenfügen…“ bzw. „Umwandeln…“
+- Fortschritt mit Phase: „Abfragen…“, solange yt-dlp die Seite abfragt; liegen
+  Bild und Ton getrennt vor (YouTube), „Video 1/2“, „Ton 2/2“, danach
+  „Zusammenfügen…“ bzw. „Umwandeln…“
+- Systembenachrichtigung, wenn die Warteschlange durch ist und das Fenster
+  gerade nicht vorn liegt – eine Meldung für alle, nicht eine je Download
 - „Nochmal“ für fehlgeschlagene oder abgebrochene Aufträge; beim Schließen
   werden laufende Downloads beendet und ihre halben Dateien weggeräumt
 - Hinweis, wenn es eine neue Version der App gibt (mit Verweis auf die

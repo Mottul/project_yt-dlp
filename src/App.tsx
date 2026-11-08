@@ -3,7 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import {
   api,
-  isPostPhase,
+  isIndeterminate,
   type CookieBrowser,
   type Format,
   type Job,
@@ -51,6 +51,18 @@ const STATUS_LABEL: Record<Job['status'], string> = {
 /** Abgeschnitten, nicht gerundet: Der Kern hält bis zum Ende bei 99,9 %. */
 const percent = (job: Job): number => (job.status === 'done' ? 100 : Math.floor(job.progress * 100))
 
+/** Höchstens so viele Zeilen zeigt das Adressfeld, danach rollt es. */
+const MAX_INPUT_ROWS = 5
+
+/** Text aus einem Drag & Drop: Links (`text/uri-list`) oder markierter Text. */
+function droppedText(data: DataTransfer | null): string {
+  if (!data) return ''
+  return data.getData('text/uri-list') || data.getData('text/plain')
+}
+
+const carriesText = (data: DataTransfer | null): boolean =>
+  !!data && (data.types.includes('text/uri-list') || data.types.includes('text/plain'))
+
 export function App(): JSX.Element {
   const [status, setStatus] = useState<ToolsStatus | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -58,7 +70,10 @@ export function App(): JSX.Element {
   const [url, setUrl] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [binPath, setBinPath] = useState('')
+  const [dragging, setDragging] = useState(false)
   const saveTimer = useRef<number | undefined>(undefined)
+  /** Was ein Drop auslöst; jede Darstellung setzt es neu, damit es den aktuellen Stand kennt. */
+  const onDrop = useRef<(text: string) => void>(() => undefined)
 
   useEffect(() => {
     void api.toolsStatus().then(setStatus)
@@ -79,6 +94,35 @@ export function App(): JSX.Element {
     }
   }, [])
 
+  // Links aus dem Browser ins Fenster ziehen. Jedes Ziehen wird abgefangen:
+  // Eine Datei, die niemand annimmt, öffnete das Fenster sonst an Stelle der App.
+  useEffect(() => {
+    const over = (e: DragEvent): void => {
+      e.preventDefault()
+      const text = carriesText(e.dataTransfer)
+      if (e.dataTransfer) e.dataTransfer.dropEffect = text ? 'copy' : 'none'
+      setDragging(text)
+    }
+    const leave = (e: DragEvent): void => {
+      // Nur beim Verlassen des Fensters, nicht beim Wechsel zwischen Elementen
+      if (e.relatedTarget === null) setDragging(false)
+    }
+    const drop = (e: DragEvent): void => {
+      e.preventDefault()
+      setDragging(false)
+      const text = droppedText(e.dataTransfer).trim()
+      if (text) onDrop.current(text)
+    }
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+    }
+  }, [])
+
   /** Einstellungen gebündelt sichern, nicht bei jedem Tastendruck. */
   function update(patch: Partial<Settings>): void {
     setSettings((prev) => {
@@ -95,9 +139,10 @@ export function App(): JSX.Element {
     if (typeof dir === 'string') update({ outputDir: dir })
   }
 
-  async function start(): Promise<void> {
+  /** Stellt die Adressen ein – aus dem Feld oder aus einem Drop. Zerlegt wird im Kern. */
+  async function start(text: string = url, fromField = true): Promise<void> {
     if (!settings) return
-    const trimmed = url.trim()
+    const trimmed = text.trim()
     if (!trimmed) return
     try {
       await api.enqueue({
@@ -107,7 +152,7 @@ export function App(): JSX.Element {
         outputDir: settings.outputDir,
         cookies: settings.cookies ?? null
       })
-      setUrl('')
+      if (fromField) setUrl('')
       setMessage(null)
     } catch (err) {
       setMessage(String(err))
@@ -127,6 +172,13 @@ export function App(): JSX.Element {
   const toolsReady = !!status?.ytdlpVersion && !!status?.ffmpegReady
   const ready = toolsReady && !!settings?.outputDir
   const problem = message ?? status?.lastError ?? null
+  const inputRows = Math.min(MAX_INPUT_ROWS, Math.max(1, url.split('\n').length))
+
+  // Bereit: gleich laden. Sonst (Werkzeuge fehlen noch) ins Feld, damit nichts verloren geht.
+  onDrop.current = (text) => {
+    if (ready) void start(text, false)
+    else setUrl((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text))
+  }
 
   return (
     <div className="app">
@@ -193,15 +245,24 @@ export function App(): JSX.Element {
       </section>
 
       <section className="card">
-        <div className="row">
-          <input
-            className="grow"
+        {/* Mehrzeilig, damit eine eingefügte Liste ihre Zeilen behält – ein
+            einzeiliges Feld klebte sie zusammen. Enter lädt, Umschalt+Enter
+            beginnt eine neue Zeile. */}
+        <div className="row top">
+          <textarea
+            className="grow address"
             value={url}
-            placeholder="Video-Adresse einfügen…"
+            rows={inputRows}
+            wrap="off"
+            placeholder="Video-Adresse einfügen oder ins Fenster ziehen – auch mehrere, eine je Zeile"
+            aria-label="Video-Adressen"
             spellCheck={false}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && ready) void start()
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                if (ready) void start()
+              }
             }}
           />
           <button className="primary" disabled={!ready || !url.trim()} onClick={() => void start()}>
@@ -292,7 +353,7 @@ export function App(): JSX.Element {
               <span className={`tag ${job.status}`}>{STATUS_LABEL[job.status]}</span>
             </div>
             <div
-              className={`bar${isPostPhase(job.phase) ? ' busy' : ''}`}
+              className={`bar${isIndeterminate(job.phase) ? ' busy' : ''}`}
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
@@ -303,7 +364,7 @@ export function App(): JSX.Element {
             </div>
             <div className="job-foot">
               <span>
-                {isPostPhase(job.phase) ? (
+                {isIndeterminate(job.phase) ? (
                   job.phaseLabel
                 ) : (
                   <>
@@ -351,6 +412,12 @@ export function App(): JSX.Element {
           Werkzeuge: {binPath}
         </span>
       </footer>
+
+      {dragging && (
+        <div className="drop" aria-hidden="true">
+          <span>{ready ? 'Loslassen zum Laden' : 'Loslassen – die Adressen kommen ins Feld'}</span>
+        </div>
+      )}
     </div>
   )
 }

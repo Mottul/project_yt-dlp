@@ -5,10 +5,12 @@ description: Eine neue Version des MottulVideoLoader veröffentlichen – Versio
 
 # Veröffentlichen
 
-So durchlaufen bei 0.1.2 und 0.1.3 (8.11.2026). Der Workflow baut rund 6½ Minuten.
+So durchlaufen bei 0.1.2 und 0.1.3 (8.11.2026). Der Workflow baut rund 6½–7 Minuten.
 
-**Öffentlich:** Veröffentlichen, Notizen ändern und Entwürfe löschen nur auf ausdrücklichen
-Wunsch des Nutzers. Ein Entwurf ist nicht öffentlich und darf jederzeit gebaut werden.
+**Öffentlich:** Einen geprüften Entwurf veröffentlichen (Schritt 5) hat der Nutzer dauerhaft
+erlaubt (8.11.2026). Auf seinem Rechner steht dafür `Bash(gh release edit *)` in
+`.claude/settings.local.json` (nur lokal, nicht im Repo). Entwürfe löschen weiter nur nach
+Rückfrage. Ein Entwurf ist nicht öffentlich und darf jederzeit gebaut werden.
 
 ## 1. Version anheben
 
@@ -81,7 +83,11 @@ curl -s -o /dev/null -w "%{redirect_url}\n" https://github.com/Mottul/project_yt
 ```
 
 Der Tag entsteht erst jetzt, am `targetCommitish` des Entwurfs. `/releases/latest` muss auf
-`…/tag/v<version>` zeigen – darauf baut ein künftiger Update-Hinweis der App (ROADMAP).
+`…/tag/v<version>` zeigen – darauf baut der Update-Hinweis der App (`core::update`).
+Die Adresse ist zwischengespeichert und zeigt nach dem Veröffentlichen noch eine Weile die
+Vorversion (bei 0.1.3 länger als fünf Minuten). Frisch fragen mit einem Anhang, z. B.
+`…/releases/latest?x=1`. Die App fragt ohne Anhang und sieht die neue Version entsprechend
+später – kein Fehler.
 GitHub antwortet dort gelegentlich mit 504; dann später noch einmal fragen.
 
 ## Danach
@@ -92,11 +98,12 @@ GitHub antwortet dort gelegentlich mit 504; dann später noch einmal fragen.
 
 ## Fallen
 
-- **Auto-Modus blockiert das Veröffentlichen** („Create Public Surface“), auch mit Auftrag des
-  Nutzers (so bei 0.1.3). Nicht umgehen: Notizen an den Entwurf hängen (nicht öffentlich), dann
-  den Nutzer bitten, auf der Entwurfsseite „Publish release“ zu klicken oder
-  `gh release edit v<version> --draft=false --latest` selbst auszuführen – und danach Tag und
-  Weiterleitung prüfen (Schritt 5).
+- **Auto-Modus blockiert das Veröffentlichen** („Create Public Surface“), wenn die Erlaubnisregel
+  fehlt, etwa auf einem anderen Rechner (so beim ersten Versuch mit 0.1.3). Nicht umgehen:
+  Notizen an den Entwurf hängen (nicht öffentlich), dann den Nutzer bitten, die Regel
+  einzutragen oder auf der Entwurfsseite „Publish release“ zu klicken. Den Befehl ohne
+  vorangestelltes `cd …&&` ausführen: Bei einem zusammengesetzten Befehl muss jeder Teil
+  erlaubt sein.
 - **`gh run watch` endet manchmal vorzeitig mit Code 1**, während ein Job noch abschließt
   („Complete job“). Dann `gh run view <id> --json status,conclusion,jobs` erneut abfragen, bis
   `completed` dasteht – die Dateien hängen meist schon am Entwurf.

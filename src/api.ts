@@ -28,6 +28,8 @@ export interface Job {
   outputDir: string
   outputFile: string | null
   error: string | null
+  /** Hinweis ohne Fehler, z. B. dass die Datei schon da war */
+  note: string | null
   createdAt: number
 }
 

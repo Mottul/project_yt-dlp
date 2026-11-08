@@ -27,6 +27,9 @@ ob eine Laufzeit gefunden wurde. Der ganze Ablauf (Rohbytes der Pipe, Download
 über den Kern per Wegwerf-Starter, Gegenprobe, bekannte Fehlerbilder) steht im
 Skill `.claude/skills/fehler-nachstellen/`.
 
+Offene Punkte stehen in `ROADMAP.md`: Erledigtes streichen, Neues mit Grund
+und Stelle eintragen.
+
 Wiederkehrende Abläufe als Projekt-Skills in `.claude/skills/`
 (`fehler-nachstellen`). Jede Änderung zieht sie mit: neue Fehlerbilder, Muster,
 Lehren.
@@ -69,6 +72,19 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
   Fehlerzeile, deshalb das ganze Ende von stderr prüfen.
 - **Adresse immer nach `--`** (`queue::build_args`): eine Eingabe, die mit „-“
   beginnt, darf nie als Option gelten.
+- **yt-dlp immer als ganzen Prozessbaum beenden** (`proctree::ProcessTree`):
+  `yt-dlp.exe` (PyInstaller) startet sich ein zweites Mal, und erst dieser
+  Prozess lädt und startet ffmpeg. Wer nur den ersten beendet, lässt den
+  Download weiterlaufen; der Platz in der Warteschlange bleibt belegt, weil die
+  Pipe offen ist. Windows: Job-Objekt (beendet auch bei Absturz der App), Unix:
+  Nachkommen aus `ps`. Nach dem Abbruch räumt `queue::leftovers` die Dateien
+  weg, die yt-dlp in diesem Lauf gemeldet hat.
+- **Nichts Blockierendes auf dem Hauptfaden:** Tauri führt Befehle OHNE `async`
+  auf dem Hauptfaden aus. Was Programme startet (Versionsabfragen,
+  `core::read_status`), läuft über `spawn_blocking` – sonst friert das Fenster
+  ein (so beim Start, bis 8.11.2026: rund 4 s). `tools::probe_version` merkt
+  sich Versionen je Datei (Größe + Änderungszeit); ein Aufruf kostet unter
+  Windows bis zu 2 s.
 - **Ausgabe von yt-dlp** immer mit `--encoding utf-8` und über
   `queue::read_lines` lesen (Bytes, ungültiges UTF-8 ersetzt, liest bis zum
   Ende). `lines()` endet bei der ersten ungültigen Zeile; dann ist die Pipe zu,

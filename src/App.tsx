@@ -117,7 +117,12 @@ export function App(): JSX.Element {
 
       <section className="card tools">
         <div className="tool-line">
-          {busy ? (
+          {status === null ? (
+            <>
+              <span className="dot spin" aria-hidden="true" />
+              <span>Prüfe Werkzeuge…</span>
+            </>
+          ) : busy ? (
             <>
               <span className="dot spin" aria-hidden="true" />
               <span>
@@ -278,6 +283,7 @@ export function App(): JSX.Element {
               </span>
             </div>
             {job.error && <p className="note bad">{job.error}</p>}
+            {job.note && <p className="note">{job.note}</p>}
           </article>
         ))}
       </section>

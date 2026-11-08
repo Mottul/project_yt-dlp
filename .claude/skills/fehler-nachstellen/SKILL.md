@@ -111,16 +111,44 @@ fn main() {
 Starten mit `cargo run -q --target-dir <repo>/target -- <zielordner im Scratchpad> <adresse>`
 (`--target-dir` spart den Neubau der Abhängigkeiten).
 
-## 4. Gegenprobe
+## 3a. Ohne fremde Seite: lokaler Testserver
+
+Für Abbruch, Reste und „schon vorhanden“ braucht es kein echtes Video. Testdatei mit dem ffmpeg
+der App, dazu ein kleiner Node-Server im Scratchpad:
 
 ```bash
-git stash push core/src/<datei>.rs   # alter Stand: der gemeldete Fehler muss kommen
-# Starter laufen lassen
-git stash pop                        # mit Fix: Fortschritt, richtiger Dateiname
+"$B/ffmpeg.exe" -f lavfi -i testsrc=duration=2:size=320x240:rate=25 -f lavfi -i sine=duration=2 \
+  -shortest -c:v libx264 -c:a aac www/probe.mp4
 ```
 
-Danach Zielordner und `.part`-Dateien löschen; einen hängenden Starter samt yt-dlp mit
-`taskkill /PID <id> /T /F` beenden.
+- `/probe.mp4` liefert die Datei → zweimal laden zeigt „has already been downloaded“.
+- `/slow.mp4` meldet 50 MB und schreibt alle 100 ms 4 KB → yt-dlp steckt mitten im Download.
+
+Abbruch prüfen im Starter: Fortschritt > 0 abwarten, `m.cancel(&id)`, dann `m.busy()` beobachten.
+**Der Platz wird erst frei, wenn kein Prozess die Pipe mehr hält.** Bleibt `busy()` wahr, läuft
+ein yt-dlp weiter. Prozessbaum ansehen:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='yt-dlp.exe'" | Select ProcessId, ParentProcessId
+```
+
+Während des Downloads sind es **zwei** Einträge (Entpacker → ladender Prozess). Nach dem Abbruch
+darf keiner übrig sein, und im Zielordner keine `.part`-Datei.
+
+## 4. Gegenprobe
+
+Bei vielen offenen Änderungen statt `git stash` nur die eine Datei tauschen:
+
+```bash
+cp core/src/<datei>.rs <scratchpad>/neu.rs
+git show HEAD:core/src/<datei>.rs > core/src/<datei>.rs   # alter Stand: Fehler muss kommen
+# Starter neu bauen und laufen lassen
+cp <scratchpad>/neu.rs core/src/<datei>.rs                # mit Fix
+```
+
+Danach Zielordner und `.part`-Dateien löschen. **Nur eigene Prozesse beenden**, gezielt per PID
+(Waise aus der Liste oben, Testserver anhand von `CommandLine` und `CreationDate`), nie alle
+`yt-dlp.exe` – der Nutzer kann gerade selbst laden.
 
 ## Fallen
 
@@ -141,6 +169,9 @@ Danach Zielordner und `.part`-Dateien löschen; einen hängenden Starter samt yt
 | `Sorry, this content is age-restricted` trotz Cookies | keine JavaScript-Laufzeit, sonst Konto nicht altersbestätigt | `core::deno` |
 | `could not find firefox cookies database` | falsches/umgebogenes Profil, Browser nie benutzt | `auth::explain_error` |
 | `Failed to decrypt with DPAPI` | Chrome/Edge unter Windows | Firefox nehmen |
+| „Abbrechen“ wirkt nicht: `.part` wächst weiter, nächster Auftrag startet nicht | nur der erste der beiden yt-dlp-Prozesse beendet (PyInstaller) | `proctree::ProcessTree` |
+| „fertig“, aber alte Datei; kein „Im Ordner zeigen“ | `has already been downloaded` (gleicher Titel) | `queue::parse_existing`, Hinweis `NOTE_EXISTING` |
+| Fenster beim Start Sekunden eingefroren | Versionsabfragen auf dem Hauptfaden (Befehl ohne `async`) | `snapshot` in `src-tauri`, `tools::probe_version` |
 
 Ein neues Fehlerbild: in `auth::explain_error` aufnehmen (Test mit der echten Zeile) und hier
 eintragen.

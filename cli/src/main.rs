@@ -260,6 +260,9 @@ fn run_jobs(
             JobStatus::Done => {
                 let file = job.output_file.unwrap_or_else(|| job.output_dir.clone());
                 println!("  {} {}", paint(GREEN, "✓"), file);
+                if let Some(note) = job.note {
+                    println!("    {}", paint(DIM, &note));
+                }
             }
             JobStatus::Error => {
                 println!(

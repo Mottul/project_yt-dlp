@@ -11,7 +11,9 @@ ersten Start unter Windows und macOS.
 ## Was die App macht
 
 - Warteschlange mit zwei gleichzeitigen Downloads, Fortschritt, Tempo,
-  Restzeit, Abbrechen
+  Restzeit, Abbrechen. Abbrechen beendet yt-dlp samt ffmpeg und räumt halb
+  geladene Dateien weg; liegt eine Datei schon im Zielordner, steht das dabei
+- Zielordner zu Beginn: „Downloads“ (änderbar)
 - Video als MP4 (Auflösung deckelbar) oder nur Ton als MP3/M4A
 - **yt-dlp bleibt aktuell:** beim Start wird die neueste stabile Version
   ermittelt und bei Abweichung ersetzt (abschaltbar)

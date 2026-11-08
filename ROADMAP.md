@@ -5,11 +5,11 @@ Begründung und Stelle im Code eintragen.
 
 ## Veröffentlichen
 
-- [ ] **0.1.3 veröffentlichen** (Version steht schon in Cargo.toml): Phasen-
-  anzeige, „Nochmal“, Hinweis auf neue Versionen, sicheres Speichern, Aufräumen
-  beim Schließen. Ablauf im Skill `veroeffentlichen`. Der Update-Hinweis greift
-  erstmals beim Schritt von 0.1.3 auf die übernächste Version – 0.1.2 kennt ihn
-  noch nicht.
+- [ ] **Update-Hinweis im echten Fenster sehen.** Ihn kennt erst 0.1.3; zu
+  sehen ist er also, sobald 0.1.4 erscheint. Dann in einer installierten 0.1.3
+  prüfen: Hinweis erscheint, „Zur Release-Seite“ öffnet den Browser (die
+  Berechtigung `opener:allow-open-url` ist eingegrenzt und lief bisher nur im
+  Bau, nicht im Fenster).
 
 ## Anzeige
 

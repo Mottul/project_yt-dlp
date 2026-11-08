@@ -5,7 +5,7 @@ description: Eine neue Version des MottulVideoLoader veröffentlichen – Versio
 
 # Veröffentlichen
 
-Zuerst so durchlaufen bei 0.1.2 (8.11.2026). Der Workflow baut rund 6½ Minuten.
+So durchlaufen bei 0.1.2 und 0.1.3 (8.11.2026). Der Workflow baut rund 6½ Minuten.
 
 **Öffentlich:** Veröffentlichen, Notizen ändern und Entwürfe löschen nur auf ausdrücklichen
 Wunsch des Nutzers. Ein Entwurf ist nicht öffentlich und darf jederzeit gebaut werden.
@@ -27,6 +27,10 @@ Anheben kommt über einen PR nach `main`, wie jede andere Änderung. Probe vor d
 `npm run app:build` → `target/release/bundle/nsis/MottulVideoLoader_<version>_x64-setup.exe`.
 
 ## 2. Workflow starten
+
+Voraussetzung: Die Prüfungen des PRs, der die Version anhob, waren grün
+(`gh pr view <nr> --json statusCheckRollup`). Die CI für den Merge-Commit auf `main` muss nicht
+abgewartet werden – sie prüft denselben Stand, der Release baut ihn ohnehin selbst.
 
 ```bash
 gh workflow run release.yml --ref main -f veroeffentlichen=true
@@ -60,7 +64,9 @@ Erwartet: `targetCommitish` = der Stand von `main`, und vier Dateien mit der Ver
 
 Was neu ist, aus Anwendersicht und auf Deutsch – aus `git log v<vorher>..main --oneline`
 (Merge-Commits und PR-Texte). Den Hinweis auf die fehlende Signatur aus dem Workflow-Text
-behalten. Datei im Scratchpad schreiben, dann:
+behalten. Oben eine Zeile, wie man von der Vorversion aktualisiert – gleichlautend mit
+„Aktualisieren“ in `docs/INSTALL.md`, nichts Eigenes behaupten. Datei im Scratchpad schreiben,
+dann:
 
 ```bash
 gh release edit v<version> --notes-file <scratchpad>/notes.md
@@ -86,6 +92,15 @@ GitHub antwortet dort gelegentlich mit 504; dann später noch einmal fragen.
 
 ## Fallen
 
+- **Auto-Modus blockiert das Veröffentlichen** („Create Public Surface“), auch mit Auftrag des
+  Nutzers (so bei 0.1.3). Nicht umgehen: Notizen an den Entwurf hängen (nicht öffentlich), dann
+  den Nutzer bitten, auf der Entwurfsseite „Publish release“ zu klicken oder
+  `gh release edit v<version> --draft=false --latest` selbst auszuführen – und danach Tag und
+  Weiterleitung prüfen (Schritt 5).
+- **`gh run watch` endet manchmal vorzeitig mit Code 1**, während ein Job noch abschließt
+  („Complete job“). Dann `gh run view <id> --json status,conclusion,jobs` erneut abfragen, bis
+  `completed` dasteht – die Dateien hängen meist schon am Entwurf.
+- Die Seite eines Entwurfs heißt `…/releases/tag/untagged-…`, nicht `…/tag/v<version>`.
 - `gh release view --json isLatest` gibt es nicht; „latest“ zeigt die Weiterleitung oben.
 - Ein Entwurf hat noch keinen Tag: `git tag` zeigt ihn erst nach dem Veröffentlichen.
 - Der Workflow nimmt das neueste stabile Rust; ein roter Bau ohne eigene Änderung kann an einem

@@ -5,21 +5,17 @@ Begründung und Stelle im Code eintragen.
 
 ## Veröffentlichen
 
-- [ ] **0.1.2 veröffentlichen.** Auf GitHub liegen nur die nie veröffentlichten
-  Entwürfe v0.1.0 und v0.1.1 (Stand September); die Anmeldung, Deno, die
-  UTF-8-Ausgabe und die Fehlerbehebungen vom November stecken in keinem
-  Release. Die alten Entwürfe löschen.
+- [ ] **Alte Entwürfe löschen.** v0.1.0 und v0.1.1 wurden nie veröffentlicht
+  (Stand September) und sind durch v0.1.2 überholt. Nur nach Rückfrage –
+  Löschen ist endgültig.
+- [ ] **0.1.3** mit der Phasenanzeige und den Skills (Skill `veroeffentlichen`).
 
 ## Anzeige
 
-- [ ] **Fortschritt in Phasen.** Bei Video + Ton läuft der Balken zweimal von
-  0 auf 100 %, Zusammenfügen und MP3-Umwandlung stehen minutenlang als
-  „lädt 99 %“ da. Phase anzeigen (Video · Ton · Umwandeln).
-  Dazu die Ausgabe maschinenlesbar anfordern (`--progress-template`,
-  `--print before_dl:title`, `--print after_move:filepath`), statt Text zu
-  zerlegen: Dann steht auch der Titel vor dem Download da, und die fertige
-  Datei kommt sicher an. `core/src/queue.rs` (`parse_progress`,
-  `parse_destination`).
+- [ ] **Titel schon während der Abfrage.** Der Titel kommt mit der ersten
+  Fortschrittszeile; davor (yt-dlp fragt die Seite ab, einige Sekunden) steht
+  die Adresse. `--print` scheidet aus (schaltet die übrigen Meldungen ab);
+  vielleicht `--print-to-file` – erst prüfen, ob es das auch tut.
 - [ ] **„Nochmal“ bei Fehlern.** Die Anfrage liegt noch im Speicher
   (`Inner::requests`); heute muss man die Adresse neu einfügen.
 - [ ] **Gleicher Titel, anderes Video.** Heute nur der Hinweis „war schon im
@@ -34,16 +30,13 @@ Begründung und Stelle im Code eintragen.
   Drag & Drop ins Fenster ziehen.
 - [ ] **Hinweis „neue Version verfügbar“** für die App selbst, über die
   Weiterleitung von `/releases/latest` des eigenen Repos (wie bei yt-dlp,
-  `core::ytdlp::latest_tag`). Setzt veröffentlichte Releases voraus.
+  `core::ytdlp::latest_tag`). Seit v0.1.2 zeigt `/releases/latest` auf ein
+  echtes Release.
 - [ ] **Systembenachrichtigung**, wenn ein Download fertig ist
   (`tauri-plugin-notification`).
 
 ## Technik
 
-- [ ] **CI auch unter Windows** (und macOS). Windows ist die Hauptplattform;
-  der Errno-22-Fehler und das Weiterladen nach dem Abbruch gab es nur dort.
-  Der Test `proctree::beendet_auch_das_kind` prüft unter Windows das
-  Job-Objekt, läuft aber bisher nur lokal.
 - [ ] **`settings.json` atomar schreiben** (Zwischendatei, dann umbenennen),
   in `src-tauri/src/lib.rs` (`save_settings`) und `cli/src/settings.rs`. Ein
   Absturz mitten im Schreiben kostet sonst den Zielordner.
@@ -54,6 +47,7 @@ Begründung und Stelle im Code eintragen.
   Werkzeugprüfung nach dem Start dauert unter Windows rund 2 s, weil yt-dlp
   und Deno je einmal starten. Mit gespeicherten Versionen (je Datei mit Größe
   und Änderungszeit) entfiele auch das; `tools::probe_version`.
-- [ ] **macOS: Abbrechen nachprüfen.** Dort beendet `proctree` die Nachkommen
-  aus der Prozesstabelle; gebaut und mit Clippy geprüft, aber nicht auf einem
-  Mac gelaufen.
+- [ ] **macOS: Abbrechen mit echtem yt-dlp nachprüfen.** Dort beendet
+  `proctree` die Nachkommen aus der Prozesstabelle. Der Mechanismus läuft in
+  der CI auf macOS (`proctree::beendet_auch_das_kind`, Eltern mit Kind), mit
+  dem echten `yt-dlp_macos` auf einem Mac noch nicht.

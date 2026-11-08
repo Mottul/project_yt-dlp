@@ -137,7 +137,9 @@ button:disabled { opacity: .45; cursor: default; }
 .bar > span { display: block; height: 100%; background: var(--primary); transition: width .2s linear; }
 .job.done .bar > span { background: var(--ok); }
 .job.error .bar > span, .job.canceled .bar > span { background: var(--muted); }
-@media (prefers-reduced-motion: reduce) { .bar > span { transition: none; } }
+/* Zusammenfügen/Umwandeln: kein messbarer Fortschritt, der Balken pulsiert */
+.bar.busy > span { animation: pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .bar > span { transition: none; } .bar.busy > span { animation: none; } }
 
 footer {
   display: flex;

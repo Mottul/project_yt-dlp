@@ -2,6 +2,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { demoApi } from './demo'
 
 export type Format = 'video' | 'audio-mp3' | 'audio-m4a'
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'canceled'
@@ -30,8 +31,18 @@ export interface Job {
   error: string | null
   /** Hinweis ohne Fehler, z. B. dass die Datei schon da war */
   note: string | null
+  /** Was gerade geschieht; null vor dem ersten Fortschritt und nach dem Ende */
+  phase: Phase | null
+  /** Dasselbe als Text, vom Kern formuliert (z. B. „Video 1/2“) */
+  phaseLabel: string | null
   createdAt: number
 }
+
+export type Phase = 'download' | 'video' | 'audio' | 'merge' | 'convert' | 'finish'
+
+/** Nacharbeit: kein messbarer Fortschritt mehr */
+export const isPostPhase = (phase: Phase | null): boolean =>
+  phase === 'merge' || phase === 'convert' || phase === 'finish'
 
 export interface ToolsStatus {
   ytdlpVersion: string | null
@@ -63,7 +74,7 @@ export interface EnqueueRequest {
   cookies: CookieBrowser | null
 }
 
-export const api = {
+const tauriApi = {
   toolsStatus: () => invoke<ToolsStatus>('tools_status'),
   ensureTools: () => invoke<ToolsStatus>('ensure_tools'),
   enqueue: (req: EnqueueRequest) => invoke<string>('enqueue', { req }),
@@ -79,3 +90,14 @@ export const api = {
   onStatus: (cb: (status: ToolsStatus) => void): Promise<UnlistenFn> =>
     listen<ToolsStatus>('tools-status', (e) => cb(e.payload))
 }
+
+export type Api = typeof tauriApi
+
+/**
+ * Im Fenster der Kern; im gewöhnlichen Browser (nur `npm run dev`) Beispieldaten,
+ * damit sich die Oberfläche in allen Zuständen ansehen lässt (Skill
+ * `oberflaeche-pruefen`). Im gebauten Paket ist `DEV` falsch und der Demo-Teil
+ * fällt beim Bündeln weg.
+ */
+const inTauri = '__TAURI_INTERNALS__' in window
+export const api: Api = inTauri || !import.meta.env.DEV ? tauriApi : demoApi

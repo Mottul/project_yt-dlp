@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { api, type CookieBrowser, type Format, type Job, type Settings, type ToolsStatus } from './api'
+import {
+  api,
+  isPostPhase,
+  type CookieBrowser,
+  type Format,
+  type Job,
+  type Settings,
+  type ToolsStatus
+} from './api'
 
 const RESOLUTIONS: Array<{ value: number | null; label: string }> = [
   { value: null, label: 'Beste' },
@@ -39,6 +47,9 @@ const STATUS_LABEL: Record<Job['status'], string> = {
   error: 'Fehler',
   canceled: 'abgebrochen'
 }
+
+/** Abgeschnitten, nicht gerundet: Der Kern hält bis zum Ende bei 99,9 %. */
+const percent = (job: Job): number => (job.status === 'done' ? 100 : Math.floor(job.progress * 100))
 
 export function App(): JSX.Element {
   const [status, setStatus] = useState<ToolsStatus | null>(null)
@@ -154,8 +165,8 @@ export function App(): JSX.Element {
               </span>
             </>
           )}
-          <button className="ghost" disabled={busy} onClick={() => void api.ensureTools()}>
-            {toolsReady ? 'Prüfen' : 'Jetzt einrichten'}
+          <button className="ghost" disabled={busy || status === null} onClick={() => void api.ensureTools()}>
+            {toolsReady || status === null ? 'Prüfen' : 'Jetzt einrichten'}
           </button>
         </div>
         {problem && <p className="note bad">{problem}</p>}
@@ -260,14 +271,28 @@ export function App(): JSX.Element {
               </span>
               <span className={`tag ${job.status}`}>{STATUS_LABEL[job.status]}</span>
             </div>
-            <div className="bar" role="progressbar" aria-valuenow={Math.round(job.progress * 100)}>
-              <span style={{ width: `${Math.round(job.progress * 100)}%` }} />
+            <div
+              className={`bar${isPostPhase(job.phase) ? ' busy' : ''}`}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent(job)}
+              aria-valuetext={job.phaseLabel ?? undefined}
+            >
+              <span style={{ width: `${percent(job)}%` }} />
             </div>
             <div className="job-foot">
               <span>
-                {Math.round(job.progress * 100)} %
-                {job.speed ? ` · ${job.speed}` : ''}
-                {job.eta ? ` · Rest ${job.eta}` : ''}
+                {isPostPhase(job.phase) ? (
+                  job.phaseLabel
+                ) : (
+                  <>
+                    {percent(job)} %
+                    {job.phaseLabel && job.phase !== 'download' ? ` · ${job.phaseLabel}` : ''}
+                    {job.speed ? ` · ${job.speed}` : ''}
+                    {job.eta ? ` · Rest ${job.eta}` : ''}
+                  </>
+                )}
               </span>
               <span className="actions">
                 {job.status === 'done' && job.outputFile && (

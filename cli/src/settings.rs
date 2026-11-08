@@ -51,9 +51,9 @@ impl Settings {
     }
 
     pub fn save(&self, data_dir: &Path) {
-        let _ = std::fs::create_dir_all(data_dir);
         if let Ok(raw) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(Self::file(data_dir), raw);
+            // Nie halb geschrieben: sonst waere beim naechsten Start alles weg
+            let _ = paths::write_atomic(&Self::file(data_dir), raw.as_bytes());
         }
     }
 

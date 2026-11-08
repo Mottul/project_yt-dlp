@@ -9,6 +9,7 @@ pub mod paths;
 pub mod proctree;
 pub mod queue;
 pub mod tools;
+pub mod update;
 pub mod ytdlp;
 
 pub use auth::CookieBrowser;
@@ -38,6 +39,8 @@ pub struct ToolsStatus {
     pub last_error: Option<String>,
     /// Ungefaehre Groesse des noch ausstehenden Nachladens in MB.
     pub pending_mb: u32,
+    /// Neuere Version der App selbst, sonst None (siehe [`update`]).
+    pub app_update: Option<update::AppUpdate>,
 }
 
 /// Liest den Ist-Zustand der Werkzeuge im angegebenen Verzeichnis.
@@ -84,6 +87,7 @@ pub fn read_status(bin_dir: &Path, latest: Option<String>) -> ToolsStatus {
         busy: false,
         last_error: None,
         pending_mb,
+        app_update: None,
     }
 }
 
@@ -154,7 +158,9 @@ pub async fn ensure_tools(bin_dir: &Path, downloads_running: bool) -> ToolsStatu
     let mut error: Option<String> = None;
     let mut latest: Option<String> = None;
 
-    match ytdlp::latest_tag().await {
+    // Beide gleichzeitig: je eine Weiterleitung bei GitHub
+    let (ytdlp_latest, app_update) = tokio::join!(ytdlp::latest_tag(), update::check());
+    match ytdlp_latest {
         Ok(tag) => {
             latest = Some(tag.clone());
             let installed = blocking(bin_dir, |dir| ytdlp::installed_version(&dir)).await;
@@ -178,6 +184,7 @@ pub async fn ensure_tools(bin_dir: &Path, downloads_running: bool) -> ToolsStatu
 
     let mut status = blocking(bin_dir, move |dir| read_status(&dir, latest)).await;
     status.last_error = error;
+    status.app_update = app_update;
     status
 }
 

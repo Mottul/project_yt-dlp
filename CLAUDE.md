@@ -108,7 +108,17 @@ machen, ohne dass sich etwas geändert hat. Dann `cargo fmt --all` laufen lassen
   tragen `#[serde(default)]` am Struct: Ein neues Feld darf eine ältere Datei nie
   verwerfen (sonst ist der Zielordner weg). Neue Felder in BEIDEN Structs
   eintragen – wer speichert, schreibt die ganze Datei. Felder mit fester Liste
-  nachsichtig lesen (`auth::lenient_browser`).
+  nachsichtig lesen (`auth::lenient_browser`). Gespeichert wird nur über
+  `paths::write_atomic` (daneben schreiben, dann umbenennen).
+- **Neu starten und Schließen** (`Manager::retry`, `Manager::shutdown`): Ein Lauf
+  gilt erst als beendet, wenn auch sein Aufräumen durch ist (`Inner::running`).
+  Vorher darf derselbe Auftrag nicht neu starten – das Aufräumen löschte sonst
+  die `.part`-Datei des neuen Laufs.
+- **Hinweis auf eine neue App-Version** (`core::update`): über die Weiterleitung
+  von `/releases/latest`, streng geprüft, still ohne Netz. Nur Hinweis mit
+  Verweis, kein Selbst-Update (Pakete unsigniert). Die Fenster-App darf nur die
+  eigene Release-Seite öffnen (`opener:allow-open-url`, eingegrenzt in
+  `capabilities/default.json`).
 - **Version ermitteln** über die Weiterleitung von `/releases/latest`, nie über
   die GitHub-API (ohne Anmeldung 60 Anfragen je Stunde und IP).
 - **Eigene Version** nur in `Cargo.toml` (`[workspace.package]`). Tauri liest

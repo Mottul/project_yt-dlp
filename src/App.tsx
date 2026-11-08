@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import {
   api,
   isPostPhase,
@@ -114,6 +114,15 @@ export function App(): JSX.Element {
     }
   }
 
+  async function retry(id: string): Promise<void> {
+    try {
+      await api.retryJob(id)
+      setMessage(null)
+    } catch (err) {
+      setMessage(String(err))
+    }
+  }
+
   const busy = status?.busy ?? false
   const toolsReady = !!status?.ytdlpVersion && !!status?.ffmpegReady
   const ready = toolsReady && !!settings?.outputDir
@@ -170,6 +179,17 @@ export function App(): JSX.Element {
           </button>
         </div>
         {problem && <p className="note bad">{problem}</p>}
+        {status?.appUpdate && (
+          <div className="tool-line update">
+            <span>
+              Neue Version <strong>{status.appUpdate.version}</strong> des MottulVideoLoader verfügbar
+              <span className="sub"> – installiert ist {status.appUpdate.current}</span>
+            </span>
+            <button className="ghost" onClick={() => void openUrl(status.appUpdate!.url)}>
+              Zur Release-Seite
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="card">
@@ -303,6 +323,11 @@ export function App(): JSX.Element {
                 {(job.status === 'queued' || job.status === 'running') && (
                   <button className="ghost small" onClick={() => void api.cancelJob(job.id)}>
                     Abbrechen
+                  </button>
+                )}
+                {(job.status === 'error' || job.status === 'canceled') && (
+                  <button className="ghost small" onClick={() => void retry(job.id)}>
+                    Nochmal
                   </button>
                 )}
               </span>

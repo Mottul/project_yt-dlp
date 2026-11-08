@@ -1,11 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Nur was die App wirklich braucht: Ordner wählen und eine fertige Datei im Dateimanager zeigen.",
+  "description": "Nur was die App wirklich braucht: Ordner wählen, eine fertige Datei im Dateimanager zeigen und die eigene Release-Seite öffnen (Hinweis auf eine neue Version).",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "opener:allow-reveal-item-in-dir"
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/Mottul/project_yt-dlp/releases/*" }]
+    }
   ]
 }

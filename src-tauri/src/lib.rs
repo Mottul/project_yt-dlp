@@ -66,6 +66,8 @@ pub struct Remote {
     pub latest: Option<String>,
     pub busy: bool,
     pub last_error: Option<String>,
+    /// Neuere Version der App, laut letzter Pruefung.
+    pub app_update: Option<core::update::AppUpdate>,
 }
 
 impl AppState {
@@ -79,6 +81,7 @@ impl AppState {
         let remote = self.remote.lock().unwrap();
         status.busy = remote.busy;
         status.last_error = remote.last_error.clone();
+        status.app_update = remote.app_update.clone();
         status
     }
 }
@@ -151,6 +154,7 @@ async fn ensure_tools(app: AppHandle) -> Result<core::ToolsStatus, String> {
         if result.ytdlp_latest.is_some() {
             remote.latest = result.ytdlp_latest.clone();
         }
+        remote.app_update = result.app_update.clone();
     }
     let status = snapshot(&app).await;
     let _ = app.emit(STATUS_EVENT, status.clone());
@@ -183,6 +187,19 @@ fn clear_finished(state: State<'_, AppState>) {
     state.manager.clear_finished();
 }
 
+/// Fehlgeschlagenen oder abgebrochenen Auftrag mit derselben Anfrage neu starten.
+#[tauri::command]
+fn retry_job(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if state.manager.retry(&id, state.bin_dir.clone()) {
+        Ok(())
+    } else {
+        Err(
+            "Dieser Auftrag lässt sich gerade nicht neu starten – gleich noch einmal versuchen."
+                .into(),
+        )
+    }
+}
+
 #[tauri::command]
 fn load_settings(state: State<'_, AppState>) -> Settings {
     read_settings(&state.settings_file)
@@ -190,11 +207,8 @@ fn load_settings(state: State<'_, AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(settings: Settings, state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(dir) = state.settings_file.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
     let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(&state.settings_file, raw).map_err(|e| e.to_string())
+    core::paths::write_atomic(&state.settings_file, raw.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Wo die Werkzeuge liegen -- fuer den Hinweis am Fensterfuss.
@@ -237,6 +251,7 @@ pub fn run() {
             list_jobs,
             cancel_job,
             clear_finished,
+            retry_job,
             load_settings,
             save_settings,
             bin_dir,
@@ -245,9 +260,13 @@ pub fn run() {
         .expect("Anwendung konnte nicht gestartet werden")
         .run(|app, event| {
             // Laufende Downloads samt Unterprozessen beenden, statt sie
-            // verwaist im Hintergrund weiterladen zu lassen.
+            // verwaist im Hintergrund weiterladen zu lassen, und ihre halben
+            // Dateien wegraeumen. Laenger als drei Sekunden haelt das das
+            // Schliessen nicht auf.
             if let tauri::RunEvent::Exit = event {
-                app.state::<AppState>().manager.shutdown();
+                app.state::<AppState>()
+                    .manager
+                    .shutdown(std::time::Duration::from_secs(3));
             }
         });
 }

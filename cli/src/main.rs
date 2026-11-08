@@ -204,6 +204,18 @@ fn print_status(status: &core::ToolsStatus) {
     if let (Some(err), true) = (&status.last_error, status.ytdlp_version.is_some()) {
         println!("  {}", paint(RED, &format!("Hinweis: {err}")));
     }
+    if let Some(update) = &status.app_update {
+        println!(
+            "  {}",
+            paint(
+                GOLD,
+                &format!(
+                    "Neue Version {} des MottulVideoLoader: {}",
+                    update.version, update.url
+                )
+            )
+        );
+    }
 }
 
 /// Stellt die Aufträge ein und zeichnet den Fortschritt, bis alles durch ist.

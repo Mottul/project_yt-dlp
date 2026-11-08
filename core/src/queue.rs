@@ -5,10 +5,11 @@
 //! ob daraus ein Fortschrittsbalken im Fenster oder eine Zeile im Terminal
 //! wird.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
@@ -659,6 +660,10 @@ struct Inner {
     cancels: HashMap<String, oneshot::Sender<()>>,
     /// yt-dlp samt Unterprozessen je laufendem Auftrag (siehe [`ProcessTree`]).
     trees: HashMap<String, Arc<ProcessTree>>,
+    /// Auftraege, deren Lauf noch nicht ganz beendet ist -- einschliesslich des
+    /// Aufraeumens nach einem Abbruch. Erst danach darf derselbe Auftrag neu
+    /// starten, sonst loeschte das Aufraeumen die Dateien des neuen Laufs.
+    running: HashSet<String>,
     active: usize,
 }
 
@@ -760,6 +765,7 @@ impl Manager {
                 let id = job.id.clone();
                 let copy = job.clone();
                 guard.active += 1;
+                guard.running.insert(id.clone());
                 let req = guard.requests.get(&id).cloned();
                 drop(guard);
                 self.sink.on_update(&copy);
@@ -774,6 +780,7 @@ impl Manager {
                 {
                     let mut guard = manager.inner.lock().unwrap();
                     guard.active = guard.active.saturating_sub(1);
+                    guard.running.remove(&id);
                 }
                 manager.schedule(dir);
             });
@@ -965,20 +972,55 @@ impl Manager {
         }
     }
 
-    /// Beendet alle laufenden Downloads samt Unterprozessen, ohne zu warten --
-    /// fuer das Schliessen der Oberflaeche. Unter Windows erledigt das zur Not
-    /// auch das System (Job-Objekt), unter macOS liefen sie sonst weiter.
-    pub fn shutdown(&self) {
-        let trees: Vec<Arc<ProcessTree>> = self
+    /// Startet einen fehlgeschlagenen oder abgebrochenen Auftrag neu: dieselbe
+    /// Anfrage, dieselbe Stelle in der Liste. false, wenn es ihn nicht (mehr)
+    /// gibt, er nicht beendet ist oder sein alter Lauf noch aufraeumt.
+    pub fn retry(&self, id: &str, bin_dir: PathBuf) -> bool {
+        let copy = {
+            let mut guard = self.inner.lock().unwrap();
+            if guard.running.contains(id) || !guard.requests.contains_key(id) {
+                return false;
+            }
+            let Some(job) = guard.jobs.iter_mut().find(|j| j.id == id) else {
+                return false;
+            };
+            if !matches!(job.status, JobStatus::Error | JobStatus::Canceled) {
+                return false;
+            }
+            job.status = JobStatus::Queued;
+            job.progress = 0.0;
+            job.error = None;
+            job.note = None;
+            job.output_file = None;
+            end_phase(job);
+            job.clone()
+        };
+        self.sink.on_update(&copy);
+        self.schedule(bin_dir);
+        true
+    }
+
+    /// Beendet alle Downloads samt Unterprozessen und raeumt ihre halben
+    /// Dateien weg -- fuer das Schliessen der Oberflaeche. Wartet hoechstens
+    /// `timeout` auf das Aufraeumen; die Prozesse beendet es sofort. Unter
+    /// Windows beendet das System sie zur Not auch so (Job-Objekt), unter macOS
+    /// liefen sie sonst weiter.
+    pub fn shutdown(&self, timeout: Duration) {
+        let open: Vec<String> = self
             .inner
             .lock()
             .unwrap()
-            .trees
-            .drain()
-            .map(|(_, tree)| tree)
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running))
+            .map(|j| j.id.clone())
             .collect();
-        for tree in trees {
-            tree.kill();
+        for id in &open {
+            self.cancel(id);
+        }
+        let deadline = Instant::now() + timeout;
+        while !self.inner.lock().unwrap().running.is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 

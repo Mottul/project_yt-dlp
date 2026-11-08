@@ -5,7 +5,11 @@ Begründung und Stelle im Code eintragen.
 
 ## Veröffentlichen
 
-- [ ] **0.1.3** mit der Phasenanzeige und den Skills (Skill `veroeffentlichen`).
+- [ ] **0.1.3 veröffentlichen** (Version steht schon in Cargo.toml): Phasen-
+  anzeige, „Nochmal“, Hinweis auf neue Versionen, sicheres Speichern, Aufräumen
+  beim Schließen. Ablauf im Skill `veroeffentlichen`. Der Update-Hinweis greift
+  erstmals beim Schritt von 0.1.3 auf die übernächste Version – 0.1.2 kennt ihn
+  noch nicht.
 
 ## Anzeige
 
@@ -13,8 +17,6 @@ Begründung und Stelle im Code eintragen.
   Fortschrittszeile; davor (yt-dlp fragt die Seite ab, einige Sekunden) steht
   die Adresse. `--print` scheidet aus (schaltet die übrigen Meldungen ab);
   vielleicht `--print-to-file` – erst prüfen, ob es das auch tut.
-- [ ] **„Nochmal“ bei Fehlern.** Die Anfrage liegt noch im Speicher
-  (`Inner::requests`); heute muss man die Adresse neu einfügen.
 - [ ] **Gleicher Titel, anderes Video.** Heute nur der Hinweis „war schon im
   Zielordner“. Als Einstellung die Video-ID in den Dateinamen nehmen
   (`%(title)s [%(id)s].%(ext)s`, `queue::build_args`).
@@ -25,21 +27,17 @@ Begründung und Stelle im Code eintragen.
   Abfrage vorab (Anzahl, Bestätigung) und einen Auftrag je Video.
 - [ ] **Mehrere Adressen auf einmal** einfügen (eine je Zeile) oder per
   Drag & Drop ins Fenster ziehen.
-- [ ] **Hinweis „neue Version verfügbar“** für die App selbst, über die
-  Weiterleitung von `/releases/latest` des eigenen Repos (wie bei yt-dlp,
-  `core::ytdlp::latest_tag`). Seit v0.1.2 zeigt `/releases/latest` auf ein
-  echtes Release.
 - [ ] **Systembenachrichtigung**, wenn ein Download fertig ist
   (`tauri-plugin-notification`).
+- [ ] **„Nochmal“ in der Terminal-Variante.** Der Kern kann es
+  (`Manager::retry`); die Terminal-Variante hat bisher keine Bedienung für
+  einzelne Aufträge.
 
 ## Technik
 
-- [ ] **`settings.json` atomar schreiben** (Zwischendatei, dann umbenennen),
-  in `src-tauri/src/lib.rs` (`save_settings`) und `cli/src/settings.rs`. Ein
-  Absturz mitten im Schreiben kostet sonst den Zielordner.
-- [ ] **Reste beim Schließen.** Schließt man die App mitten im Download,
-  beendet sie yt-dlp (`Manager::shutdown`), räumt `.part`-Dateien aber nicht
-  weg – das geschieht nur beim Abbrechen.
+- [ ] **Strg+C in der Terminal-Variante** räumt nicht auf: Unter Windows beendet
+  das Job-Objekt yt-dlp, die `.part`-Dateien bleiben. Ein Handler, der
+  `Manager::shutdown` ruft, hätte das Fenster-Verhalten.
 - [ ] **Versionen über den Neustart merken** (optional). Die erste
   Werkzeugprüfung nach dem Start dauert unter Windows rund 2 s, weil yt-dlp
   und Deno je einmal starten. Mit gespeicherten Versionen (je Datei mit Größe

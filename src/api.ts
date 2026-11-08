@@ -55,6 +55,16 @@ export interface ToolsStatus {
   busy: boolean
   lastError: string | null
   pendingMb: number
+  /** Neuere Version der App selbst, sonst null */
+  appUpdate: AppUpdate | null
+}
+
+export interface AppUpdate {
+  version: string
+  /** die laufende Version */
+  current: string
+  /** Release-Seite mit den Installern */
+  url: string
 }
 
 export interface Settings {
@@ -81,6 +91,7 @@ const tauriApi = {
   listJobs: () => invoke<Job[]>('list_jobs'),
   cancelJob: (id: string) => invoke<void>('cancel_job', { id }),
   clearFinished: () => invoke<void>('clear_finished'),
+  retryJob: (id: string) => invoke<void>('retry_job', { id }),
   loadSettings: () => invoke<Settings>('load_settings'),
   saveSettings: (settings: Settings) => invoke<void>('save_settings', { settings }),
   binDir: () => invoke<string>('bin_dir'),

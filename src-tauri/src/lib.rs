@@ -42,7 +42,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            output_dir: String::new(),
+            // Wie die Terminal-Variante: sonst ist „Laden“ beim ersten Start
+            // ohne erkennbaren Grund gesperrt.
+            output_dir: default_output_dir(),
             format: core::Format::Video,
             max_height: Some(1080),
             auto_update: true,
@@ -67,51 +69,82 @@ pub struct Remote {
 }
 
 impl AppState {
-    fn snapshot(&self) -> core::ToolsStatus {
+    /// Blockiert fuer die Versionsabfragen -- nur ueber [`snapshot`] aufrufen.
+    fn snapshot_blocking(&self) -> core::ToolsStatus {
+        // Die Sperre nicht ueber die Abfragen halten: die Startpruefung wartet
+        // sonst Sekunden darauf, nur um `busy` zu setzen. `busy` und Fehler
+        // erst danach lesen -- sie koennen sich waehrenddessen geaendert haben.
+        let latest = self.remote.lock().unwrap().latest.clone();
+        let mut status = core::read_status(&self.bin_dir, latest);
         let remote = self.remote.lock().unwrap();
-        let mut status = core::read_status(&self.bin_dir, remote.latest.clone());
         status.busy = remote.busy;
         status.last_error = remote.last_error.clone();
         status
     }
 }
 
+/// Zustand der Werkzeuge, abseits des Fensters ermittelt.
+///
+/// Befehle ohne `async` fuehrt Tauri auf dem Hauptfaden aus. Die
+/// Versionsabfragen dauern beim ersten Mal Sekunden -- so lange war das
+/// Fenster beim Start eingefroren.
+async fn snapshot(app: &AppHandle) -> core::ToolsStatus {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().snapshot_blocking())
+        .await
+        .unwrap_or_default()
+}
+
+fn default_output_dir() -> String {
+    core::paths::default_output_dir()
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn read_settings(path: &PathBuf) -> Settings {
-    std::fs::read_to_string(path)
+    let mut settings: Settings = std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Aeltere Fassungen speicherten einen leeren Zielordner.
+    if settings.output_dir.trim().is_empty() {
+        settings.output_dir = default_output_dir();
+    }
+    settings
 }
 
 /* ------------------------------- Befehle -------------------------------- */
 
 #[tauri::command]
-fn tools_status(state: State<'_, AppState>) -> core::ToolsStatus {
-    state.snapshot()
+async fn tools_status(app: AppHandle) -> Result<core::ToolsStatus, String> {
+    Ok(snapshot(&app).await)
 }
 
 /// Prueft yt-dlp auf eine neue Version und laedt fehlende Werkzeuge nach.
 #[tauri::command]
 async fn ensure_tools(app: AppHandle) -> Result<core::ToolsStatus, String> {
-    let (bin_dir, downloads_running) = {
+    // Die Sperre endet mit dem Block: vor einem `await` darf sie nicht mehr
+    // gehalten werden.
+    let started = {
         let state = app.state::<AppState>();
         let mut remote = state.remote.lock().unwrap();
         if remote.busy {
-            drop(remote);
-            return Ok(state.snapshot());
+            None
+        } else {
+            remote.busy = true;
+            remote.last_error = None;
+            Some((state.bin_dir.clone(), state.manager.busy()))
         }
-        remote.busy = true;
-        remote.last_error = None;
-        drop(remote);
-        let value = (state.bin_dir.clone(), state.manager.busy());
-        let _ = app.emit(STATUS_EVENT, state.snapshot());
-        value
     };
+    let Some((bin_dir, downloads_running)) = started else {
+        return Ok(snapshot(&app).await);
+    };
+    let _ = app.emit(STATUS_EVENT, snapshot(&app).await);
 
     let result = core::ensure_tools(&bin_dir, downloads_running).await;
 
-    let state = app.state::<AppState>();
     {
+        let state = app.state::<AppState>();
         let mut remote = state.remote.lock().unwrap();
         remote.busy = false;
         remote.last_error = result.last_error.clone();
@@ -119,7 +152,7 @@ async fn ensure_tools(app: AppHandle) -> Result<core::ToolsStatus, String> {
             remote.latest = result.ytdlp_latest.clone();
         }
     }
-    let status = state.snapshot();
+    let status = snapshot(&app).await;
     let _ = app.emit(STATUS_EVENT, status.clone());
     Ok(status)
 }
@@ -208,6 +241,13 @@ pub fn run() {
             save_settings,
             bin_dir,
         ])
-        .run(tauri::generate_context!())
-        .expect("Anwendung konnte nicht gestartet werden");
+        .build(tauri::generate_context!())
+        .expect("Anwendung konnte nicht gestartet werden")
+        .run(|app, event| {
+            // Laufende Downloads samt Unterprozessen beenden, statt sie
+            // verwaist im Hintergrund weiterladen zu lassen.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<AppState>().manager.shutdown();
+            }
+        });
 }

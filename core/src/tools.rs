@@ -6,8 +6,10 @@
 //! Das ersetzt keine Signaturpruefung: es sichert die Uebertragung, nicht die
 //! Herkunft des Releases.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -255,8 +257,72 @@ pub fn exe_name(stem: &str) -> String {
     }
 }
 
+/// Groesse und Aenderungszeit der beteiligten Dateien: aendert sich eine davon
+/// (neue Version abgelegt), gilt die gemerkte Antwort nicht mehr.
+type Stamp = Vec<(u64, Option<std::time::SystemTime>)>;
+
+/// Ein Platz je Aufruf (Programm + Argumente). Der Platz bleibt waehrend der
+/// Abfrage gesperrt: Fragen zwei Stellen gleichzeitig (Statusanzeige und
+/// Startpruefung), startet das Programm trotzdem nur einmal.
+type Slot = Arc<Mutex<Option<(Stamp, String)>>>;
+
+/// Programm und Argumente eines Aufrufs.
+type ProbeKey = (PathBuf, Vec<String>);
+
+static VERSIONS: OnceLock<Mutex<HashMap<ProbeKey, Slot>>> = OnceLock::new();
+
+/// Stempel aus dem Programm und allen Argumenten, die auf eine Datei zeigen
+/// (die Zipapp beim Python-Weg). None, wenn das Programm nicht lesbar ist.
+fn stamp(bin: &Path, args: &[&str]) -> Option<Stamp> {
+    let of = |p: &Path| {
+        std::fs::metadata(p)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| (m.len(), m.modified().ok()))
+    };
+    let mut out = vec![of(bin)?];
+    out.extend(args.iter().filter_map(|a| of(Path::new(a))));
+    Some(out)
+}
+
 /// Startet ein Programm und liefert die erste Zeile der Ausgabe.
+///
+/// Gemerkt, solange sich die Datei nicht aendert: Ein Aufruf kostet unter
+/// Windows bis zu zwei Sekunden (yt-dlp entpackt sich bei jedem Start, Deno
+/// prueft der Virenscanner), und beim Programmstart fragten Statusanzeige und
+/// Startpruefung jedes Werkzeug mehrfach ab. Fehlschlaege werden nicht gemerkt
+/// -- eine frisch abgelegte Datei kann kurz gesperrt sein.
 pub fn probe_version(bin: &Path, args: &[&str]) -> Option<String> {
+    remembered(bin, args, || run_probe(bin, args))
+}
+
+fn remembered(bin: &Path, args: &[&str], probe: impl FnOnce() -> Option<String>) -> Option<String> {
+    let Some(now) = stamp(bin, args) else {
+        return probe();
+    };
+    let key = (
+        bin.to_path_buf(),
+        args.iter().map(|a| a.to_string()).collect(),
+    );
+    let slot: Slot = VERSIONS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .clone();
+    let mut slot = slot.lock().unwrap();
+    if let Some((seen, version)) = slot.as_ref() {
+        if *seen == now {
+            return Some(version.clone());
+        }
+    }
+    let version = probe()?;
+    *slot = Some((now, version.clone()));
+    Some(version)
+}
+
+fn run_probe(bin: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = std::process::Command::new(bin);
     cmd.args(args);
     hide_console(&mut cmd);
@@ -390,6 +456,43 @@ mod tests {
         // Keine Reste vom Zwischenschritt.
         let leftovers = std::fs::read_dir(&dir).unwrap().count();
         assert_eq!(leftovers, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Die Version wird je Datei nur einmal ermittelt -- bis eine neue Datei
+    /// daliegt. Fehlschlaege zaehlen nicht.
+    #[test]
+    fn version_wird_gemerkt_bis_die_datei_wechselt() {
+        let dir = std::env::temp_dir().join(format!("mvl-test-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("werkzeug");
+        std::fs::write(&bin, b"v1").unwrap();
+        let calls = std::cell::Cell::new(0);
+        let ask = |answer: Option<&str>| {
+            remembered(&bin, &["--version"], || {
+                calls.set(calls.get() + 1);
+                answer.map(String::from)
+            })
+        };
+
+        assert_eq!(ask(None), None, "Fehlschlag");
+        assert_eq!(ask(Some("1.0")).as_deref(), Some("1.0"));
+        assert_eq!(ask(Some("anders")).as_deref(), Some("1.0"), "gemerkt");
+        assert_eq!(calls.get(), 2, "nach dem Treffer nicht mehr gestartet");
+
+        // Neue Datei (andere Groesse) -> neu fragen
+        std::fs::write(&bin, b"version 2").unwrap();
+        assert_eq!(ask(Some("2.0")).as_deref(), Some("2.0"));
+        assert_eq!(calls.get(), 3);
+
+        // Andere Argumente sind ein eigener Platz
+        let other = remembered(&bin, &["-version"], || Some("x".into()));
+        assert_eq!(other.as_deref(), Some("x"));
+
+        // Ohne Datei wird nichts gemerkt
+        std::fs::remove_file(&bin).unwrap();
+        assert_eq!(ask(Some("weg")).as_deref(), Some("weg"));
+        assert_eq!(ask(Some("immer neu")).as_deref(), Some("immer neu"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

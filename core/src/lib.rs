@@ -6,6 +6,7 @@ pub mod auth;
 pub mod deno;
 pub mod ffmpeg;
 pub mod paths;
+pub mod proctree;
 pub mod queue;
 pub mod tools;
 pub mod ytdlp;
@@ -40,13 +41,26 @@ pub struct ToolsStatus {
 }
 
 /// Liest den Ist-Zustand der Werkzeuge im angegebenen Verzeichnis.
+///
+/// Blockiert, solange die Programme zur Versionsabfrage laufen (beim ersten
+/// Mal bis zu zwei Sekunden, danach gemerkt, siehe [`tools::probe_version`]).
+/// Deshalb nie auf dem Faden einer Oberflaeche aufrufen. Die drei Abfragen
+/// laufen nebeneinander -- die Zeit ist fast nur Warten auf den Start.
 pub fn read_status(bin_dir: &Path, latest: Option<String>) -> ToolsStatus {
     let launcher = ytdlp::resolve_launcher(bin_dir);
-    let ytdlp_version = launcher.as_ref().and_then(|l| l.version());
+    let (ytdlp_version, ffmpeg_version, deno_version) = std::thread::scope(|s| {
+        let ffmpeg = s.spawn(|| ffmpeg::installed_version(bin_dir));
+        let deno = s.spawn(|| deno::installed_version(bin_dir));
+        let ytdlp = launcher.as_ref().and_then(|l| l.version());
+        (
+            ytdlp,
+            ffmpeg.join().unwrap_or(None),
+            deno.join().unwrap_or(None),
+        )
+    });
     let ytdlp_mode = launcher
         .filter(|_| ytdlp_version.is_some())
         .map(|l| l.kind().to_string());
-    let ffmpeg_version = ffmpeg::installed_version(bin_dir);
     let ffmpeg_ready = ffmpeg_version.is_some();
     let mut pending_mb = 0;
     if !ffmpeg_ready {
@@ -66,7 +80,7 @@ pub fn read_status(bin_dir: &Path, latest: Option<String>) -> ToolsStatus {
         ytdlp_mode,
         ffmpeg_version,
         ffmpeg_ready,
-        deno_version: deno::installed_version(bin_dir),
+        deno_version,
         busy: false,
         last_error: None,
         pending_mb,
@@ -143,7 +157,8 @@ pub async fn ensure_tools(bin_dir: &Path, downloads_running: bool) -> ToolsStatu
     match ytdlp::latest_tag().await {
         Ok(tag) => {
             latest = Some(tag.clone());
-            if ytdlp::installed_version(bin_dir).as_deref() != Some(tag.as_str()) {
+            let installed = blocking(bin_dir, |dir| ytdlp::installed_version(&dir)).await;
+            if installed.as_deref() != Some(tag.as_str()) {
                 if downloads_running {
                     error = Some("Download läuft — Aktualisierung später möglich".into());
                 } else if let Err(err) = install_ytdlp(bin_dir, &tag).await {
@@ -161,9 +176,21 @@ pub async fn ensure_tools(bin_dir: &Path, downloads_running: bool) -> ToolsStatu
         add_error(&mut error, format!("JavaScript-Laufzeit (Deno): {err}"));
     }
 
-    let mut status = read_status(bin_dir, latest);
+    let mut status = blocking(bin_dir, move |dir| read_status(&dir, latest)).await;
     status.last_error = error;
     status
+}
+
+/// Versionsabfragen starten Programme und warten darauf: nicht auf einem
+/// Faden des async-Unterbaus, der derweil andere Aufgaben bedienen soll.
+async fn blocking<T: Send + 'static>(
+    bin_dir: &Path,
+    f: impl FnOnce(std::path::PathBuf) -> T + Send + 'static,
+) -> T {
+    let dir = bin_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || f(dir))
+        .await
+        .expect("Versionsabfrage abgebrochen")
 }
 
 #[cfg(test)]

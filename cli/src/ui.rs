@@ -61,6 +61,14 @@ pub fn job_line(job: &Job, width: usize) -> String {
     let bar_width = 20;
     let head = truncate(&title, width.saturating_sub(bar_width + 24).max(12));
     match job.status {
+        JobStatus::Done if job.note.is_some() => {
+            format!(
+                "  {} {}  {}",
+                paint(GOLD, "="),
+                head,
+                paint(DIM, "war schon da")
+            )
+        }
         JobStatus::Done => format!("  {} {}", paint(GREEN, "✓"), head),
         JobStatus::Error => format!("  {} {}  {}", paint(RED, "✗"), head, paint(DIM, &detail)),
         JobStatus::Canceled => format!("  {} {}", paint(DIM, "–"), head),

@@ -18,5 +18,11 @@ uuid.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-# CREATE_NO_WINDOW: sonst blitzt bei jedem Aufruf ein Konsolenfenster auf.
-winapi = { version = "0.3", features = ["winbase"] }
+# winbase: CREATE_NO_WINDOW, sonst blitzt bei jedem Aufruf ein Konsolenfenster auf.
+# jobapi2/winnt/handleapi: Job-Objekt, damit ein Abbruch yt-dlp samt
+# Unterprozessen beendet (siehe proctree).
+winapi = { version = "0.3", features = ["winbase", "jobapi2", "winnt", "handleapi"] }
+
+[target.'cfg(unix)'.dependencies]
+# kill(2) fuer die Nachkommen von yt-dlp (siehe proctree)
+libc = "0.2"

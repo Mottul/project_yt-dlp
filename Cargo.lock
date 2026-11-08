@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "mottul-video-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "mottul-video-core",
  "serde",
@@ -2182,10 +2182,11 @@ dependencies = [
 
 [[package]]
 name = "mottul-video-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "hex",
+ "libc",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2198,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "mottul-video-loader"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "mottul-video-core",
  "serde",

@@ -15,6 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::oneshot;
 
 use crate::auth::{explain_error, CookieBrowser};
+use crate::proctree::ProcessTree;
 
 /// Nimmt jede Aenderung an einem Auftrag entgegen. Wird aus Arbeitsfaeden
 /// aufgerufen, muss also selbst fuer Ordnung sorgen.
@@ -75,8 +76,16 @@ pub struct Job {
     pub output_dir: String,
     pub output_file: Option<String>,
     pub error: Option<String>,
+    /// Hinweis ohne Fehler, z. B. dass die Datei schon da war.
+    pub note: Option<String>,
     pub created_at: u64,
 }
+
+/// Hinweis, wenn yt-dlp nichts laedt, weil die Datei schon im Zielordner liegt.
+/// Bei gleichem Titel kann das auch ein ANDERES Video gewesen sein.
+pub const NOTE_EXISTING: &str =
+    "War schon im Zielordner – nicht erneut geladen. Gleicher Titel, aber anderes Video? \
+     Vorhandene Datei umbenennen und erneut laden.";
 
 /// Aus einer Fortschrittszeile gelesene Werte.
 #[derive(Debug, Default, PartialEq)]
@@ -132,6 +141,77 @@ pub fn parse_destination(line: &str) -> Option<String> {
         return Some(rest.trim().trim_matches('"').to_string());
     }
     None
+}
+
+/// Liest „[download] <datei> has already been downloaded“: yt-dlp laedt nicht,
+/// weil die Datei (oder bei Ton die umgewandelte) schon daliegt.
+pub fn parse_existing(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("[download] ")?;
+    let end = rest.find(" has already been downloaded")?;
+    let path = rest[..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+/// Was ein abgebrochener Download zu einer gemeldeten Zieldatei hinterlaesst.
+/// `names` sind die Dateinamen in ihrem Ordner; zurueck kommen die zu loeschenden.
+///
+/// Die Datei selbst gehoert dazu: yt-dlp meldet ein Ziel nur, wenn es die
+/// Datei in DIESEM Lauf schreibt -- liegt sie schon da, heisst es „has already
+/// been downloaded“ und es gibt keine Zielmeldung. Dazu `.part`, `.ytdl`,
+/// `.part-Frag<n>` (halb geladen) und `<name>.temp.<endung>` (halb
+/// zusammengefuegt oder umgewandelt).
+pub fn leftovers(dest_name: &str, names: &[String]) -> Vec<String> {
+    let temp = match dest_name.rfind('.') {
+        Some(i) if i > 0 => format!("{}.temp{}", &dest_name[..i], &dest_name[i..]),
+        _ => format!("{dest_name}.temp"),
+    };
+    let part = format!("{dest_name}.part");
+    let ytdl = format!("{dest_name}.ytdl");
+    let frag = format!("{dest_name}.part-Frag");
+    names
+        .iter()
+        .filter(|n| {
+            *n == dest_name || **n == part || **n == ytdl || **n == temp || n.starts_with(&frag)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Loescht die Reste eines abgebrochenen Auftrags -- nur im eigenen Zielordner.
+async fn remove_leftovers(destinations: &[String], output_dir: &str) {
+    let mut pending = Vec::new();
+    for dest in destinations {
+        let dest = Path::new(dest);
+        let (Some(dir), Some(name)) = (dest.parent(), dest.file_name()) else {
+            continue;
+        };
+        if dir != Path::new(output_dir) {
+            continue;
+        }
+        let names: Vec<String> = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for left in leftovers(&name.to_string_lossy(), &names) {
+            let path = dir.join(left);
+            if !pending.contains(&path) {
+                pending.push(path);
+            }
+        }
+    }
+    // Unter Windows haelt ein gerade beendeter Prozess seine Dateien noch
+    // einen Moment offen.
+    for _ in 0..10 {
+        pending.retain(|p| std::fs::remove_file(p).is_err() && p.exists());
+        if pending.is_empty() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }
 
 /// Eine Zeile aus der Pipe: Zeilenende weg, ungueltiges UTF-8 ersetzt statt
@@ -239,6 +319,8 @@ struct Inner {
     jobs: Vec<Job>,
     requests: HashMap<String, EnqueueRequest>,
     cancels: HashMap<String, oneshot::Sender<()>>,
+    /// yt-dlp samt Unterprozessen je laufendem Auftrag (siehe [`ProcessTree`]).
+    trees: HashMap<String, Arc<ProcessTree>>,
     active: usize,
 }
 
@@ -305,6 +387,7 @@ impl Manager {
             output_dir: req.output_dir.clone(),
             output_file: None,
             error: None,
+            note: None,
             created_at: now_ms(),
         };
         {
@@ -389,12 +472,24 @@ impl Manager {
             }
         };
 
+        let tree = ProcessTree::attach(&child).map(Arc::new);
         let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
-        self.inner
-            .lock()
-            .unwrap()
-            .cancels
-            .insert(id.to_string(), cancel_tx);
+        {
+            let mut guard = self.inner.lock().unwrap();
+            // Kam der Abbruch, waehrend yt-dlp startete, gab es fuer cancel()
+            // noch nichts zu beenden. Dann den Sender fallen lassen: Der
+            // Empfaenger meldet sich sofort, und unten wird beendet.
+            let canceled = guard
+                .jobs
+                .iter()
+                .any(|j| j.id == id && j.status == JobStatus::Canceled);
+            if !canceled {
+                guard.cancels.insert(id.to_string(), cancel_tx);
+                if let Some(tree) = &tree {
+                    guard.trees.insert(id.to_string(), tree.clone());
+                }
+            }
+        }
 
         let stdout = child.stdout.take().expect("stdout ist gesetzt");
         let stderr = child.stderr.take().expect("stderr ist gesetzt");
@@ -421,34 +516,44 @@ impl Manager {
             }
         }));
 
+        // Alle Dateien, die yt-dlp in diesem Lauf schreibt -- fuer das
+        // Aufraeumen nach einem Abbruch.
+        let mut destinations: Vec<String> = Vec::new();
         let status = loop {
             tokio::select! {
                 _ = &mut cancel_rx => {
+                    // Den ganzen Baum: der erste yt-dlp-Prozess allein laedt nicht.
+                    if let Some(tree) = &tree {
+                        tree.kill();
+                    }
                     let _ = child.kill().await;
                     break child.wait().await;
                 }
-                Some(line) = rx.recv() => self.handle_line(id, &line),
+                Some(line) = rx.recv() => destinations.extend(self.handle_line(id, &line)),
                 // `wait()` ist abbruchsicher und darf hier wiederholt werden.
                 res = child.wait() => break res,
             }
         };
 
         // Was noch im Puffer liegt, gehoert zum Ergebnis: der Kanal endet erst,
-        // wenn die lesende Aufgabe fertig ist.
+        // wenn die lesende Aufgabe fertig ist -- also wenn kein Prozess des
+        // Baums die Pipe mehr offen haelt.
         while let Some(line) = rx.recv().await {
-            self.handle_line(id, &line);
+            destinations.extend(self.handle_line(id, &line));
         }
 
-        self.inner.lock().unwrap().cancels.remove(id);
-
-        let canceled = self
-            .inner
-            .lock()
-            .unwrap()
-            .jobs
-            .iter()
-            .any(|j| j.id == id && j.status == JobStatus::Canceled);
+        let canceled = {
+            let mut guard = self.inner.lock().unwrap();
+            guard.cancels.remove(id);
+            guard.trees.remove(id);
+            guard
+                .jobs
+                .iter()
+                .any(|j| j.id == id && j.status == JobStatus::Canceled)
+        };
+        drop(tree);
         if canceled {
+            remove_leftovers(&destinations, &req.output_dir).await;
             return;
         }
 
@@ -484,7 +589,8 @@ impl Manager {
         }
     }
 
-    fn handle_line(&self, id: &str, line: &str) {
+    /// Wertet eine Zeile aus; liefert die Zieldatei, wenn sie eine meldet.
+    fn handle_line(&self, id: &str, line: &str) -> Option<String> {
         if let Some(progress) = parse_progress(line) {
             self.patch(id, |job| {
                 if let Some(p) = progress.percent {
@@ -494,13 +600,21 @@ impl Manager {
                 job.eta = progress.eta;
             });
         }
-        if let Some(dest) = parse_destination(line) {
-            let title = title_from_path(&dest);
+        if let Some(existing) = parse_existing(line) {
+            let title = title_from_path(&existing);
             self.patch(id, |job| {
-                job.output_file = Some(dest.clone());
+                job.output_file = Some(existing.clone());
                 job.title = Some(title.clone());
+                job.note = Some(NOTE_EXISTING.into());
             });
         }
+        let dest = parse_destination(line)?;
+        let title = title_from_path(&dest);
+        self.patch(id, |job| {
+            job.output_file = Some(dest.clone());
+            job.title = Some(title.clone());
+        });
+        Some(dest)
     }
 
     pub fn cancel(&self, id: &str) {
@@ -520,12 +634,34 @@ impl Manager {
             job.eta = None;
             let copy = job.clone();
             let sender = guard.cancels.remove(id);
+            let tree = guard.trees.get(id).cloned();
             drop(guard);
             self.sink.on_update(&copy);
+            // Sofort beenden, nicht erst, wenn die Aufgabe dazu kommt
+            if let Some(tree) = tree {
+                tree.kill();
+            }
             sender
         };
         if let Some(tx) = sender {
             let _ = tx.send(());
+        }
+    }
+
+    /// Beendet alle laufenden Downloads samt Unterprozessen, ohne zu warten --
+    /// fuer das Schliessen der Oberflaeche. Unter Windows erledigt das zur Not
+    /// auch das System (Job-Objekt), unter macOS liefen sie sonst weiter.
+    pub fn shutdown(&self) {
+        let trees: Vec<Arc<ProcessTree>> = self
+            .inner
+            .lock()
+            .unwrap()
+            .trees
+            .drain()
+            .map(|(_, tree)| tree)
+            .collect();
+        for tree in trees {
+            tree.kill();
         }
     }
 
@@ -636,6 +772,56 @@ mod tests {
             Some("/tmp/lied.mp3")
         );
         assert!(parse_destination("[download]  12.3% of 45.60MiB").is_none());
+    }
+
+    #[test]
+    fn schon_vorhandene_datei() {
+        assert_eq!(
+            parse_existing("[download] C:\\Ziel\\Trailer.mp4 has already been downloaded")
+                .as_deref(),
+            Some("C:\\Ziel\\Trailer.mp4")
+        );
+        // Aeltere Fassungen haengen noch etwas an
+        assert_eq!(
+            parse_existing("[download] /z/a b.mp4 has already been downloaded and merged")
+                .as_deref(),
+            Some("/z/a b.mp4")
+        );
+        assert!(parse_existing("[download] Destination: /z/a.mp4").is_none());
+        assert!(parse_existing("[download]  12.3% of 45.60MiB").is_none());
+        assert!(parse_existing("[download]  has already been downloaded").is_none());
+    }
+
+    #[test]
+    fn reste_eines_abbruchs() {
+        let names: Vec<String> = [
+            "Film.f137.mp4.part",
+            "Film.f137.mp4.ytdl",
+            "Film.f137.mp4.part-Frag3",
+            "Film.f140.m4a",
+            "Film.temp.mp4",
+            "Film.mp4.bak",
+            "Film 2.f137.mp4.part",
+            "Anderes.mp4",
+        ]
+        .map(String::from)
+        .to_vec();
+        let mut left = leftovers("Film.f137.mp4", &names);
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "Film.f137.mp4.part",
+                "Film.f137.mp4.part-Frag3",
+                "Film.f137.mp4.ytdl"
+            ]
+        );
+        // Fertig geladener Teilstrom, nie zusammengefuegt
+        assert_eq!(leftovers("Film.f140.m4a", &names), ["Film.f140.m4a"]);
+        // Halb zusammengefuegt
+        assert_eq!(leftovers("Film.mp4", &names), ["Film.temp.mp4"]);
+        assert!(leftovers("Gibts nicht.mp4", &names).is_empty());
+        assert!(leftovers("ohne-endung", &["ohne-endung.temp".into()]).len() == 1);
     }
 
     #[test]

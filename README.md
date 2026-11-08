@@ -11,7 +11,9 @@ ersten Start unter Windows und macOS.
 ## Was die App macht
 
 - Warteschlange mit zwei gleichzeitigen Downloads, Fortschritt, Tempo,
-  Restzeit, Abbrechen
+  Restzeit, Abbrechen. Abbrechen beendet yt-dlp samt ffmpeg und räumt halb
+  geladene Dateien weg; liegt eine Datei schon im Zielordner, steht das dabei
+- Zielordner zu Beginn: „Downloads“ (änderbar)
 - Video als MP4 (Auflösung deckelbar) oder nur Ton als MP3/M4A
 - **yt-dlp bleibt aktuell:** beim Start wird die neueste stabile Version
   ermittelt und bei Abweichung ersetzt (abschaltbar)
@@ -124,11 +126,21 @@ Bedienung: Adresse einfügen und Enter; `f` Format, `a` Auflösung, `o` Ordner,
 
 ## Veröffentlichen
 
-Actions → **Release** → *Run workflow* → Version eintragen (z. B. `v0.1.0`).
+Die Version steht nur an einer Stelle: `version` unter `[workspace.package]`
+in `Cargo.toml`. Fenster-App, Terminal-Variante, Installer-Namen und Release-Tag
+richten sich danach – auch bei einem lokalen `npm run app:build`.
+`tauri.conf.json` und `package.json` tragen deshalb keine eigene Version.
+
+1. Version in `Cargo.toml` anheben und committen (`Cargo.lock` zieht beim
+   nächsten `cargo build` nach und gehört mit in den Commit).
+2. Actions → **Release** → *Run workflow* → Haken bei **veroeffentlichen**.
+
 Der Workflow baut die Installer für Windows und macOS und hängt sie an einen
-**Release-Entwurf**; der Tag entsteht, sobald der Entwurf veröffentlicht wird.
-Ein bereits vorhandener Tag `v*` löst denselben Lauf aus. Ohne Versionsangabe
-wird nur gebaut, die Ergebnisse liegen dann sieben Tage als Artefakt am Lauf.
+**Release-Entwurf** `v<Version>`; der Tag entsteht, sobald der Entwurf
+veröffentlicht wird. Gibt es den Release schon (auch als Entwurf), bricht er ab:
+dann wurde das Anheben vergessen. Ein gepushter Tag `v*` löst denselben Lauf
+aus, muss aber zur Version passen. Ohne Haken wird nur gebaut, die Ergebnisse
+liegen dann sieben Tage als Artefakt am Lauf.
 
 Das macOS-Paket ist universal — es läuft auf Intel und Apple Silicon, verlangt
 aber **macOS 11.3 oder neuer**: `wry` registriert eine WKWebView-Methode
